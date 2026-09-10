@@ -9,7 +9,7 @@ export const ROLE_LABELS: Record<UserRole, string> = {
 
 export const ROLE_PRIVILEGES: Record<UserRole, string> = {
   admin:
-    "Full access to every menu, user management, system configuration, audit, reports and all document actions.",
+    "Full access to every menu, user management, system configuration, audit and reports; document actions remain limited to the administrator's assigned office.",
   office_head:
     "Monitor and act on documents assigned to their office, including receiving, processing, approving and dispatching.",
   staff: "Register, receive, process, forward and file documents assigned to their office.",

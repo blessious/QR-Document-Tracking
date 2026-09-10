@@ -143,13 +143,27 @@ export type SavedSystemSettings = {
 let officeCache: Office[] = [];
 let userCache: User[] = [];
 let typeCache: DocumentType[] = [];
+let csrfToken: string | null = null;
+
+async function loadCsrfToken() {
+  const response = await fetch(`${API_BASE}/auth/csrf`, { credentials: "include" });
+  if (!response.ok) throw new Error("Unable to establish a secure session.");
+  const body = (await response.json()) as { csrfToken: string };
+  csrfToken = body.csrfToken;
+  return csrfToken;
+}
+export type RegisteredDocument = TrackedDocument & { publicTrackingToken?: string };
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const hasBody = init?.body !== undefined && init.body !== null;
+  const mutation = ["POST", "PATCH", "DELETE"].includes(init?.method ?? "GET");
+  const exempt = path === "/auth/login";
+  if (mutation && !exempt && !csrfToken) await loadCsrfToken();
   const response = await fetch(`${API_BASE}${path}`, {
     credentials: "include",
     headers: {
       ...(hasBody ? { "content-type": "application/json" } : {}),
+      ...(mutation && !exempt && csrfToken ? { "x-csrf-token": csrfToken } : {}),
       ...(init?.headers ?? {}),
     },
     ...init,
@@ -177,10 +191,11 @@ function rememberReferences(data: Partial<AppBootstrap>) {
 
 export const api = {
   async login(username: string, password: string): Promise<User> {
-    const result = await request<{ user: User }>("/auth/login", {
+    const result = await request<{ user: User; csrfToken: string }>("/auth/login", {
       method: "POST",
       body: JSON.stringify({ username, password }),
     });
+    csrfToken = result.csrfToken;
     return result.user;
   },
   async logout(): Promise<void> {
@@ -188,10 +203,12 @@ export const api = {
     officeCache = [];
     userCache = [];
     typeCache = [];
+    csrfToken = null;
   },
   async me(): Promise<User | null> {
     try {
       const result = await request<{ user: User }>("/auth/me");
+      await loadCsrfToken();
       return result.user;
     } catch {
       return null;
@@ -239,8 +256,8 @@ export const api = {
   async getDocument(id: string): Promise<TrackedDocument> {
     return request<TrackedDocument>(`/documents/${id}`);
   },
-  async registerDocument(input: RegisterInput): Promise<TrackedDocument> {
-    return request<TrackedDocument>("/documents", { method: "POST", body: JSON.stringify(input) });
+  async registerDocument(input: RegisterInput): Promise<RegisteredDocument> {
+    return request<RegisteredDocument>("/documents", { method: "POST", body: JSON.stringify(input) });
   },
   async dispatchDocument(
     docId: string,
@@ -306,8 +323,19 @@ export const api = {
   }> {
     return request(`/scans/resolve?code=${encodeURIComponent(code)}`);
   },
-  async publicTrack(code: string): Promise<TrackedDocument> {
-    return request(`/public/track?code=${encodeURIComponent(code)}`);
+  async publicTrack(token: string): Promise<{
+    trackingReference: string;
+    status: "active" | "in_transit" | "completed" | "unavailable";
+    updatedAt: string;
+  }> {
+    return request(`/public/track?token=${encodeURIComponent(token)}`);
+  },
+  async rotatePublicToken(docId: string): Promise<string> {
+    const result = await request<{ token: string }>(`/documents/${docId}/public-token/rotate`, { method: "POST" });
+    return result.token;
+  },
+  async revokePublicToken(docId: string): Promise<void> {
+    await request(`/documents/${docId}/public-token/revoke`, { method: "POST" });
   },
   async listDocumentTypes(): Promise<DocumentType[]> {
     return request<DocumentType[]>("/document-types");

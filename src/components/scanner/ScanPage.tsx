@@ -61,9 +61,13 @@ export function ScanPage() {
 
   scanInputLockedRef.current = actionPending || dispatchOpen;
 
+  const isDesktopScanner = () =>
+    !window.matchMedia || window.matchMedia("(hover: hover) and (pointer: fine)").matches;
+
   const restoreScanInputFocus = () => {
+    if (!isDesktopScanner()) return;
     window.setTimeout(() => {
-      if (!scanInputLockedRef.current) scanInputRef.current?.focus();
+      if (!scanInputLockedRef.current && isDesktopScanner()) scanInputRef.current?.focus();
     }, 0);
   };
 

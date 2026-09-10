@@ -4,7 +4,7 @@ type Actor = {
 };
 
 export function canMutateDocument(actor: Actor, custodyOfficeId: string) {
-  return actor.role === "admin" || actor.officeId === custodyOfficeId;
+  return actor.officeId === custodyOfficeId;
 }
 
 export function nextStatusAction(status: "in_process" | "on_hold" | "returned" | "completed") {

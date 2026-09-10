@@ -8,7 +8,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { api, type RegisterInput } from "@/services/api";
+import { api, type RegisterInput, type RegisteredDocument } from "@/services/api";
 import type {
   DocumentStatus,
   DocumentType,
@@ -28,10 +28,9 @@ interface AppState {
   users: User[];
   documentTypes: DocumentType[];
   login: (username: string, password: string) => Promise<User>;
-  loginAs: (user: User) => Promise<void>;
   logout: () => Promise<void>;
   refresh: () => Promise<void>;
-  registerDocument: (input: RegisterInput) => Promise<TrackedDocument>;
+  registerDocument: (input: RegisterInput) => Promise<RegisteredDocument>;
   receiveDocument: (docId: string, remarks?: string, expectedUpdatedAt?: string) => Promise<void>;
   dispatchDocument: (
     docId: string,
@@ -133,11 +132,6 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
         setSession(user);
         await refresh(user.role);
         return user;
-      },
-      loginAs: async (user) => {
-        const signedIn = await api.login(user.username, "demo1234");
-        setSession(signedIn);
-        await refresh(signedIn.role);
       },
       logout: async () => {
         await api.logout();

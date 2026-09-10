@@ -12,6 +12,9 @@ import {
 
 loadLocalEnv();
 assertDatabaseUrl();
+if (process.env.NODE_ENV === "production") {
+  throw new Error("Demo seed is disabled in production.");
+}
 
 const prisma = new PrismaClient();
 

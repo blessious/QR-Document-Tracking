@@ -28,8 +28,8 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { useApp } from "@/store/app-store";
-import { api, officeName, type AttachmentInput } from "@/services/api";
-import type { Priority, TrackedDocument } from "@/types";
+import { api, officeName, type AttachmentInput, type RegisteredDocument } from "@/services/api";
+import type { Priority } from "@/types";
 import { createClientId } from "@/lib/client-id";
 
 export const Route = createFileRoute("/_shell/documents/new")({
@@ -56,7 +56,7 @@ function RegisterPage() {
   const [step, setStep] = useState(1);
   const [saving, setSaving] = useState(false);
   const [requestId, setRequestId] = useState(() => createClientId());
-  const [created, setCreated] = useState<TrackedDocument | null>(null);
+  const [created, setCreated] = useState<RegisteredDocument | null>(null);
   const [attachments, setAttachments] = useState<(AttachmentInput & { id: string })[]>([]);
   const [typeDialogOpen, setTypeDialogOpen] = useState(false);
   const [newTypeName, setNewTypeName] = useState("");
@@ -160,6 +160,30 @@ function RegisterPage() {
                 </div>
               </div>
               <BarcodePlaceholder value={created.trackingCode} className="mt-3" />
+            </div>
+            <div className="rounded-lg border border-border bg-muted/40 p-4">
+              <p className="text-xs font-medium text-muted-foreground">Public tracking token</p>
+              {created.publicTrackingToken ? (
+                <>
+                  <p className="mt-1 break-all font-mono text-sm">{created.publicTrackingToken}</p>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="mt-3"
+                    onClick={() => void navigator.clipboard.writeText(created.publicTrackingToken!)}
+                  >
+                    Copy public token
+                  </Button>
+                  <p className="mt-2 text-xs text-muted-foreground">
+                    Give this token only to the requester. It cannot be recovered after leaving this page.
+                  </p>
+                </>
+              ) : (
+                <p className="mt-1 text-sm text-muted-foreground">
+                  This registration was recovered after a retry. An administrator can issue a replacement public token if needed.
+                </p>
+              )}
             </div>
             <div className="flex flex-wrap justify-center gap-2">
               <Button

@@ -34,7 +34,7 @@ export const Route = createFileRoute("/_shell/documents/$docId")({
 
 function DocumentDetail() {
   const { docId } = useParams({ from: "/_shell/documents/$docId" });
-  const { documents } = useApp();
+  const { documents, session } = useApp();
   const doc = documents.find((d) => d.id === docId);
 
   if (!doc) {
@@ -51,6 +51,13 @@ function DocumentDetail() {
       />
     );
   }
+
+  // During transit, custody remains recorded at the sending office until the
+  // destination receives the physical document. Only the destination gets a
+  // receive action in that state; the sending office must not see controls.
+  const canReceive = doc.status === "in_transit" && doc.nextOfficeId === session?.officeId;
+  const canManage = doc.status !== "in_transit" && session?.officeId === doc.currentOfficeId;
+  const showRoutingActions = canReceive || canManage;
 
   return (
     <>
@@ -200,15 +207,17 @@ function DocumentDetail() {
             </CardContent>
           </Card>
 
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-base">Routing actions</CardTitle>
-              <CardDescription>Actions update the custody log immediately.</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <DocumentActions key={doc.id} doc={doc} />{" "}
-            </CardContent>
-          </Card>
+          {showRoutingActions ? (
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-base">Routing actions</CardTitle>
+                <CardDescription>Actions update the custody log immediately.</CardDescription>
+              </CardHeader>
+              <CardContent>
+                <DocumentActions key={doc.id} doc={doc} />{" "}
+              </CardContent>
+            </Card>
+          ) : null}
         </div>
       </div>
     </>

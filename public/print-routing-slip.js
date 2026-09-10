@@ -1,0 +1,2 @@
+document.title = "";
+window.print();

@@ -82,7 +82,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command ^
   "$apiLog = Join-Path $pidDir 'api.log';" ^
   "$prodLog = Join-Path $pidDir 'prod-web.log';" ^
   "$httpsLog = Join-Path $pidDir 'prod-https.log';" ^
-  "Start-AppProcess 'api' 3001 ('npm run api > ' + [char]34 + $apiLog + [char]34 + ' 2>&1');" ^
+  "Start-AppProcess 'api' 3001 ('set NODE_ENV=production&& npm run api > ' + [char]34 + $apiLog + [char]34 + ' 2>&1');" ^
   "Start-AppProcess 'prod-web' 4173 ('npx --yes wrangler --cwd .output dev --ip 0.0.0.0 --port 4173 > ' + [char]34 + $prodLog + [char]34 + ' 2>&1');" ^
   "Start-AppProcess 'prod-https' 4174 ('set ' + [char]34 + 'PROD_PROXY_CERT=' + $certPath + [char]34 + '&& set ' + [char]34 + 'PROD_PROXY_KEY=' + $certPath + [char]34 + '&& node server\production-network-proxy.mjs > ' + [char]34 + $httpsLog + [char]34 + ' 2>&1');" ^
   "Write-Host '';" ^

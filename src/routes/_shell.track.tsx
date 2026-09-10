@@ -1,19 +1,15 @@
 import { toast } from "sonner";
 import { useState } from "react";
 import { createFileRoute } from "@tanstack/react-router";
-import { Search, MapPin, Clock, FileQuestion } from "lucide-react";
+import { Search, Clock, FileQuestion } from "lucide-react";
 import { PageHeader } from "@/components/common/PageHeader";
-import { Timeline } from "@/components/common/Timeline";
-import { StatusBadge } from "@/components/common/StatusBadge";
+import { Badge } from "@/components/ui/badge";
 import { EmptyState } from "@/components/common/EmptyState";
-import { QrPlaceholder } from "@/components/common/QrPlaceholder";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { useApp } from "@/store/app-store";
-import { api, docTypeName, officeName } from "@/services/api";
+import { api } from "@/services/api";
 import { formatDateTime } from "@/lib/format";
-import type { TrackedDocument } from "@/types";
 
 export const Route = createFileRoute("/_shell/track")({
   head: () => ({
@@ -21,12 +17,12 @@ export const Route = createFileRoute("/_shell/track")({
       { title: "Track a document — LGU DocTrack" },
       {
         name: "description",
-        content: "Enter a tracking or QR reference code to see where a document currently sits.",
+        content: "Use a private public-tracking token to view a document's current status.",
       },
       { property: "og:title", content: "Track a document — LGU DocTrack" },
       {
         property: "og:description",
-        content: "Enter a tracking or QR reference code to locate a document.",
+        content: "Use a private public-tracking token to view a document's current status.",
       },
     ],
   }),
@@ -34,18 +30,15 @@ export const Route = createFileRoute("/_shell/track")({
 });
 
 function TrackPage() {
-  const { documents } = useApp();
   const [code, setCode] = useState("");
   const [searched, setSearched] = useState(false);
-  const [match, setMatch] = useState<
-    (TrackedDocument & { officeNames?: Record<string, string>; typeName?: string }) | null
-  >(null);
+  const [match, setMatch] = useState<Awaited<ReturnType<typeof api.publicTrack>> | null>(null);
 
   return (
     <>
       <PageHeader
         title="Track a document"
-        description="Look up any document by its printed tracking code or QR reference. No sign-in required."
+        description="Use the private public-tracking token supplied by the issuing office. No sign-in is required."
       />
 
       <Card className="max-w-2xl">
@@ -68,15 +61,15 @@ function TrackPage() {
             <Input
               value={code}
               onChange={(e) => setCode(e.target.value)}
-              placeholder="e.g. LGU-2026-000418 or QR-000418"
-              aria-label="Tracking code"
+              placeholder="Public tracking token"
+              aria-label="Public tracking token"
             />
             <Button type="submit">
               <Search className="size-4" /> Track
             </Button>
           </form>
           <p className="mt-3 text-xs text-muted-foreground">
-            Use the code printed on your routing slip.
+            Tracking codes and internal QR labels cannot be used on this public page.
           </p>
         </CardContent>
       </Card>
@@ -84,35 +77,23 @@ function TrackPage() {
       {searched && !match ? (
         <EmptyState
           icon={FileQuestion}
-          title="No document found for that code"
+          title="No tracking reference found"
           description="Double-check the reference on your routing slip, or contact the Records Management Section."
         />
       ) : null}
 
       {match ? (
-        <div className="grid gap-6 lg:grid-cols-3">
-          <Card className="lg:col-span-2">
+        <div className="max-w-2xl">
+          <Card>
             <CardHeader className="flex-row items-start justify-between space-y-0">
               <div>
-                <CardTitle className="text-base">{match.title}</CardTitle>
-                <CardDescription>
-                  {match.trackingCode} · {match.typeName ?? docTypeName(match.typeId)}
-                </CardDescription>
+                <CardTitle className="text-base">{match.trackingReference}</CardTitle>
+                <CardDescription>Public status only</CardDescription>
               </div>
-              <StatusBadge status={match.status} />
+              <Badge variant="secondary">{match.status.replaceAll("_", " ")}</Badge>
             </CardHeader>
             <CardContent className="space-y-5">
               <div className="grid gap-4 sm:grid-cols-2">
-                <div className="flex items-start gap-3 rounded-lg border border-border p-4">
-                  <MapPin className="mt-0.5 size-4 text-primary" aria-hidden />
-                  <div>
-                    <p className="text-xs text-muted-foreground">Currently at</p>
-                    <p className="text-sm font-medium">
-                      {match.officeNames?.[match.currentOfficeId] ??
-                        officeName(match.currentOfficeId)}
-                    </p>
-                  </div>
-                </div>
                 <div className="flex items-start gap-3 rounded-lg border border-border p-4">
                   <Clock className="mt-0.5 size-4 text-primary" aria-hidden />
                   <div>
@@ -121,16 +102,6 @@ function TrackPage() {
                   </div>
                 </div>
               </div>
-              <Timeline events={match.events} officeNames={match.officeNames} />
-            </CardContent>
-          </Card>
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-base">Reference label</CardTitle>
-            </CardHeader>
-            <CardContent className="flex flex-col items-center gap-3">
-              <QrPlaceholder value={match.qrCode} size={150} />
-              <p className="font-mono text-sm">{match.qrCode}</p>
             </CardContent>
           </Card>
         </div>

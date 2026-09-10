@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { PrismaClient, type Prisma } from "@prisma/client";
 import { execFileSync } from "node:child_process";
-import { randomUUID } from "node:crypto";
+import { createHmac, randomUUID } from "node:crypto";
 import jwt from "jsonwebtoken";
 import { loadLocalEnv } from "./load-env.js";
 
@@ -15,10 +15,13 @@ let app: (typeof import("./index.js"))["app"];
 const cookie = (id: string) =>
   `session=${jwt.sign({ id }, process.env.JWT_SECRET ?? "replace-me-in-production")}`;
 async function call(method: "GET" | "POST" | "PATCH", url: string, user = "a", payload?: unknown) {
+  const session = jwt.sign({ id: user }, process.env.JWT_SECRET ?? "test-or-development-jwt-secret-32-bytes");
+  const csrf = createHmac("sha256", process.env.CSRF_SECRET ?? "test-or-development-csrf-secret-32-bytes")
+    .update(session).digest("base64url");
   return app.inject({
     method,
     url,
-    headers: { cookie: cookie(user) },
+    headers: { cookie: `session=${session}`, ...(method === "GET" ? {} : { "x-csrf-token": csrf }) },
     ...(payload === undefined ? {} : { payload: payload as Record<string, unknown> }),
   });
 }
@@ -90,6 +93,38 @@ afterAll(async () => {
 }, 60000);
 
 describe("persisted document lifecycle", () => {
+  it("requires CSRF protection for authenticated mutations", async () => {
+    const session = jwt.sign({ id: "a" }, process.env.JWT_SECRET ?? "test-or-development-jwt-secret-32-bytes");
+    const missing = await app.inject({
+      method: "POST", url: "/api/documents", headers: { cookie: `session=${session}` },
+      payload: { title: "Blocked request", typeId: "type", priority: "routine" },
+    });
+    expect(missing.statusCode).toBe(403);
+
+    const csrf = createHmac("sha256", process.env.CSRF_SECRET ?? "test-or-development-csrf-secret-32-bytes")
+      .update(session).digest("base64url");
+    const hostile = await app.inject({
+      method: "POST", url: "/api/documents",
+      headers: { cookie: `session=${session}`, "x-csrf-token": csrf, origin: "https://evil.example" },
+      payload: { title: "Blocked origin", typeId: "type", priority: "routine" },
+    });
+    expect(hostile.statusCode).toBe(403);
+  });
+
+  it("exposes only minimal public tracking data through random tokens", async () => {
+    const doc = await register();
+    expect(doc.publicTrackingToken).toMatch(/^[A-Za-z0-9_-]{32}$/);
+    const byCode = await app.inject({ method: "GET", url: `/api/public/track?token=${doc.trackingCode}` });
+    expect(byCode.statusCode).toBe(404);
+    const tracked = await app.inject({ method: "GET", url: `/api/public/track?token=${doc.publicTrackingToken}` });
+    expect(tracked.statusCode, tracked.body).toBe(200);
+    expect(tracked.json()).toEqual({
+      trackingReference: doc.trackingCode,
+      status: "active",
+      updatedAt: doc.updatedAt,
+    });
+  });
+
   it("keeps document type lists local to each office", async () => {
     expect((await call("GET", "/api/document-types", "b")).json()).toEqual([]);
 
@@ -197,6 +232,13 @@ describe("persisted document lifecycle", () => {
     const second = await call("POST", "/api/documents", "a", payload);
     expect(first.statusCode, first.body).toBe(200);
     expect(second.json().id).toBe(first.json().id);
+    expect(second.json().publicTrackingToken).toBeUndefined();
+    expect(
+      (await app.inject({
+        method: "GET",
+        url: `/api/public/track?token=${first.json().publicTrackingToken}`,
+      })).statusCode,
+    ).toBe(200);
     expect(await db.document.count({ where: { title: "Retry test" } })).toBe(1);
   });
   it("lets staff void a mistaken registered document and blocks further routing", async () => {
@@ -281,6 +323,10 @@ describe("persisted document lifecycle", () => {
     expect(received.statusCode, received.body).toBe(200);
     expect(received.json()).toMatchObject({ currentOfficeId: "b", status: "received" });
     expect(received.json().nextOfficeId).toBeUndefined();
+    expect(
+      (await call("POST", `/api/documents/${doc.id}/status`, "a", { status: "on_hold", remarks: "No longer in custody" }))
+        .statusCode,
+    ).toBe(403);
     expect((await call("GET", `/api/scans/resolve?code=${doc.qrCode}`, "b")).json().outcome).toBe(
       "dispatch",
     );
@@ -378,6 +424,13 @@ describe("persisted document lifecycle", () => {
       [1, 2].map(() => call("POST", `/api/documents/${doc.id}/dispatch`, "a", { toOfficeId: "b" })),
     );
     expect(dispatched.map((r) => r.statusCode).sort()).toEqual([200, 400]);
+    expect(
+      (await call("POST", `/api/documents/${doc.id}/status`, "a", { status: "on_hold", remarks: "Too late" }))
+        .statusCode,
+    ).toBe(400);
+    expect(
+      (await call("POST", `/api/documents/${doc.id}/dispatch`, "a", { toOfficeId: "c" })).statusCode,
+    ).toBe(400);
     expect((await call("POST", `/api/documents/${doc.id}/receive`, "x", {})).statusCode).toBe(403);
     const receipts = await Promise.all(
       [1, 2].map(() => call("POST", `/api/documents/${doc.id}/receive`, "b", {})),

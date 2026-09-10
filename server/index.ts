@@ -1,5 +1,6 @@
 import { documentReport } from "./reports.js";
 import { AsyncLocalStorage } from "node:async_hooks";
+import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import cookie from "@fastify/cookie";
 import cors from "@fastify/cors";
 import sensible from "@fastify/sensible";
@@ -9,12 +10,13 @@ import Fastify, { type FastifyRequest } from "fastify";
 import jwt from "jsonwebtoken";
 import QRCode from "qrcode";
 import { z } from "zod";
-import { assertDatabaseUrl, loadLocalEnv } from "./load-env.js";
+import { assertDatabaseUrl, loadLocalEnv, readSecurityConfig } from "./load-env.js";
 import { canMutateDocument, nextStatusAction } from "./custody.js";
 import { code128Svg } from "../src/lib/code128.js";
 
 loadLocalEnv();
 assertDatabaseUrl();
+const security = readSecurityConfig();
 
 const database = new PrismaClient();
 const transactionContext = new AsyncLocalStorage<Prisma.TransactionClient>();
@@ -28,23 +30,10 @@ const prisma = new Proxy(database, {
 export const app = Fastify({
   logger: process.env.NODE_ENV !== "test",
   bodyLimit: 100 * 1024 * 1024,
+  trustProxy: security.trustedProxies,
 });
 export { database };
-const jwtSecret = process.env.JWT_SECRET ?? "replace-me-in-production";
-const frontendOrigins = (
-  process.env.FRONTEND_ORIGIN ??
-  "http://localhost:5173,http://127.0.0.1:5173,http://localhost:8080,http://127.0.0.1:8080"
-)
-  .split(",")
-  .map((origin) => origin.trim())
-  .filter(Boolean);
-const localNetworkOriginPatterns = [
-  /^https?:\/\/localhost(?::\d+)?$/,
-  /^https?:\/\/127\.0\.0\.1(?::\d+)?$/,
-  /^https?:\/\/192\.168\.\d{1,3}\.\d{1,3}(?::\d+)?$/,
-  /^https?:\/\/10\.\d{1,3}\.\d{1,3}\.\d{1,3}(?::\d+)?$/,
-  /^https?:\/\/172\.(1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3}(?::\d+)?$/,
-];
+const jwtSecret = security.jwtSecret;
 
 type Actor = {
   id: string;
@@ -129,7 +118,7 @@ const officeSchema = z.object({
 const userPatchSchema = z.object({
   name: z.string().min(2).optional(),
   username: z.string().min(3).optional(),
-  password: z.string().min(8).optional(),
+  password: z.string().min(12).optional(),
   active: z.boolean().optional(),
   role: z.enum(["admin", "office_head", "staff", "receiving"]).optional(),
   officeId: z.string().optional(),
@@ -139,7 +128,7 @@ const userPatchSchema = z.object({
 const userCreateSchema = z.object({
   name: z.string().min(2),
   username: z.string().min(3),
-  password: z.string().min(8),
+  password: z.string().min(12),
   active: z.boolean().default(true),
   role: z.enum(["admin", "office_head", "staff", "receiving"]),
   officeId: z.string().min(1),
@@ -228,16 +217,27 @@ app.register(cors, {
   origin: (origin, callback) => {
     const isAllowed =
       !origin ||
-      frontendOrigins.includes(origin) ||
-      localNetworkOriginPatterns.some((pattern) => pattern.test(origin));
+      security.origins.includes(origin);
     callback(null, isAllowed);
   },
   methods: ["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
-  allowedHeaders: ["content-type"],
+  allowedHeaders: ["content-type", "x-csrf-token"],
   credentials: true,
 });
 app.register(cookie);
 app.register(sensible);
+
+app.addHook("onSend", async (_request, reply, payload) => {
+  reply.headers({
+    "content-security-policy": "default-src 'self'; base-uri 'self'; frame-ancestors 'none'; object-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self'; font-src 'self' data:; form-action 'self'",
+    "permissions-policy": "camera=(self), microphone=(), geolocation=()",
+    "referrer-policy": "no-referrer",
+    "x-content-type-options": "nosniff",
+    "x-frame-options": "DENY",
+    ...(security.production ? { "strict-transport-security": "max-age=31536000; includeSubDomains" } : {}),
+  });
+  return payload;
+});
 
 app.setErrorHandler((error, request, reply) => {
   if (error instanceof z.ZodError)
@@ -246,6 +246,8 @@ app.setErrorHandler((error, request, reply) => {
     });
   const failure = error as Error & { statusCode?: number };
   request.log.error(error);
+  if (failure.statusCode === 429 && "retryAfter" in failure)
+    reply.header("retry-after", String((failure as typeof failure & { retryAfter: number }).retryAfter));
 
   return reply.code(failure.statusCode ?? 500).send({
     message: failure.statusCode
@@ -256,16 +258,18 @@ app.setErrorHandler((error, request, reply) => {
 
 app.addHook("preHandler", async (request) => {
   if (!request.url.startsWith("/api/") || isPublicRoute(request)) return;
+  if (request.url.split("?", 1)[0] === "/api/auth/logout") {
+    request.actor = await readActor(request).catch(() => undefined);
+    if (request.actor) verifyCsrf(request);
+    return;
+  }
   request.actor = await readActor(request);
+  if (["POST", "PATCH", "DELETE"].includes(request.method)) verifyCsrf(request);
 });
 
 function isPublicRoute(request: FastifyRequest) {
-  return (
-    request.url.startsWith("/api/auth/login") ||
-    request.url.startsWith("/api/auth/logout") ||
-    request.url.startsWith("/api/public/track") ||
-    request.url.startsWith("/api/health")
-  );
+  const path = request.url.split("?", 1)[0];
+  return new Set(["/api/auth/login", "/api/public/track", "/api/health"]).has(path ?? "");
 }
 
 async function readActor(request: FastifyRequest): Promise<Actor> {
@@ -297,7 +301,67 @@ function requireRoles(request: FastifyRequest, roles: Actor["role"][]) {
 }
 
 function clientIp(request: FastifyRequest) {
-  return request.headers["x-forwarded-for"]?.toString().split(",")[0]?.trim() ?? request.ip;
+  return request.ip;
+}
+
+function csrfToken(request: FastifyRequest) {
+  const session = request.cookies.session;
+  if (!session) throw app.httpErrors.unauthorized("Sign in required.");
+  return createHmac("sha256", security.csrfSecret).update(session).digest("base64url");
+}
+
+function verifyCsrf(request: FastifyRequest) {
+  const origin = request.headers.origin;
+  if (origin && !security.origins.includes(origin)) throw app.httpErrors.forbidden("Request origin is not allowed.");
+  const supplied = request.headers["x-csrf-token"];
+  const expected = csrfToken(request);
+  if (typeof supplied !== "string") throw app.httpErrors.forbidden("Invalid CSRF token.");
+  const left = Buffer.from(supplied);
+  const right = Buffer.from(expected);
+  if (left.length !== right.length || !timingSafeEqual(left, right))
+    throw app.httpErrors.forbidden("Invalid CSRF token.");
+}
+
+type RateBucket = { startedAt: number; count: number };
+const rateBuckets = new Map<string, RateBucket>();
+function enforceRateLimit(key: string, limit: number, windowMs: number) {
+  const now = Date.now();
+  if (rateBuckets.size > 10_000) {
+    for (const [storedKey, stored] of rateBuckets)
+      if (now - stored.startedAt >= windowMs) rateBuckets.delete(storedKey);
+  }
+  const current = rateBuckets.get(key);
+  const bucket = !current || now - current.startedAt >= windowMs ? { startedAt: now, count: 0 } : current;
+  bucket.count += 1;
+  rateBuckets.set(key, bucket);
+  if (bucket.count > limit) {
+    const retryAfter = Math.max(1, Math.ceil((bucket.startedAt + windowMs - now) / 1000));
+    const error = app.httpErrors.tooManyRequests("Too many requests. Try again later.");
+    Object.assign(error, { retryAfter });
+    throw error;
+  }
+}
+
+function publicTokenHash(token: string) {
+  return createHash("sha256").update(token).digest("hex");
+}
+function newPublicToken() {
+  return randomBytes(24).toString("base64url");
+}
+async function newUniquePublicToken() {
+  for (;;) {
+    const token = newPublicToken();
+    const exists = await prisma.document.findUnique({
+      where: { publicTokenHash: publicTokenHash(token) },
+      select: { id: true },
+    });
+    if (!exists) return token;
+  }
+}
+
+function validatePassword(password: string) {
+  if (password.length < 12 || ["demo1234", "password1234", "superadmin.user"].includes(password.toLowerCase()))
+    throw app.httpErrors.badRequest("Password must be at least 12 characters and must not be a default password.");
 }
 
 async function audit(
@@ -313,7 +377,15 @@ async function audit(
 }
 
 function mapUser(user: Prisma.UserGetPayload<Record<string, never>>) {
-  const { passwordHash, createdAt, updatedAt, ...safe } = user;
+  const {
+    passwordHash,
+    createdAt,
+    updatedAt,
+    failedLoginAttempts: _failedLoginAttempts,
+    lastFailedLoginAt: _lastFailedLoginAt,
+    lockedUntil: _lockedUntil,
+    ...safe
+  } = user;
   return {
     ...safe,
     lastLogin: safe.lastLogin?.toISOString() ?? new Date(0).toISOString(),
@@ -638,20 +710,39 @@ app.post("/api/auth/login", async (request, reply) => {
   const body = z
     .object({ username: z.string().min(1), password: z.string().min(1) })
     .parse(request.body);
+  const username = body.username.trim().toLowerCase();
+  const windowMs = security.loginWindowMinutes * 60 * 1000;
+  enforceRateLimit(`login-ip:${clientIp(request)}`, security.loginIpLimit, windowMs);
   const user = await prisma.user.findUnique({
-    where: { username: body.username.trim().toLowerCase() },
+    where: { username },
   });
-  if (!user || !user.active || !(await bcrypt.compare(body.password, user.passwordHash))) {
+  const now = new Date();
+  const locked = Boolean(user?.lockedUntil && user.lockedUntil > now);
+  const validPassword = user && !locked && user.active && (await bcrypt.compare(body.password, user.passwordHash));
+  if (!validPassword) {
+    if (user && !locked) {
+      const attempts = user.failedLoginAttempts + 1;
+      const shouldLock = attempts >= security.loginAccountLimit;
+      await prisma.user.update({
+        where: { id: user.id },
+        data: {
+          failedLoginAttempts: shouldLock ? 0 : attempts,
+          lastFailedLoginAt: now,
+          lockedUntil: shouldLock ? new Date(now.getTime() + windowMs) : null,
+        },
+      });
+    }
     await prisma.auditEntry.create({
       data: {
         action: "user.login_failed",
-        target: body.username,
+        target: username,
         ip: clientIp(request),
         severity: "high",
       },
     });
     throw app.httpErrors.unauthorized("Invalid credentials.");
   }
+  if (!user) throw app.httpErrors.unauthorized("Invalid credentials.");
   const actor: Actor = {
     id: user.id,
     role: user.role,
@@ -659,7 +750,10 @@ app.post("/api/auth/login", async (request, reply) => {
     username: user.username,
   };
   const token = jwt.sign(actor, jwtSecret, { expiresIn: "8h" });
-  await prisma.user.update({ where: { id: user.id }, data: { lastLogin: new Date() } });
+  await prisma.user.update({
+    where: { id: user.id },
+    data: { lastLogin: now, failedLoginAttempts: 0, lastFailedLoginAt: null, lockedUntil: null },
+  });
   reply.setCookie("session", token, {
     httpOnly: true,
     sameSite: "lax",
@@ -669,11 +763,12 @@ app.post("/api/auth/login", async (request, reply) => {
   });
   request.actor = actor;
   await audit(request, "user.login", user.username);
-  return { user: mapUser(user) };
+  return { user: mapUser(user), csrfToken: csrfToken(request) };
 });
 
 app.post("/api/auth/logout", async (request, reply) => {
   request.actor = await readActor(request).catch(() => undefined);
+  if (request.actor && ["POST", "PATCH", "DELETE"].includes(request.method)) verifyCsrf(request);
   if (request.actor) await audit(request, "user.logout", request.actor.username);
   reply.clearCookie("session", { path: "/" });
   return { ok: true };
@@ -683,6 +778,10 @@ app.get("/api/auth/me", async (request) => {
   const actor = requireActor(request);
   const user = await prisma.user.findUniqueOrThrow({ where: { id: actor.id } });
   return { user: mapUser(user) };
+});
+app.get("/api/auth/csrf", async (request) => {
+  requireActor(request);
+  return { csrfToken: csrfToken(request) };
 });
 
 app.get("/api/offices", async () => {
@@ -746,6 +845,7 @@ app.get("/api/users", async (request) => {
 app.post("/api/users", async (request) => {
   requireRoles(request, ["admin"]);
   const body = userCreateSchema.parse(request.body);
+  validatePassword(body.password);
   const user = await prisma.user.create({
     data: {
       name: body.name.trim(),
@@ -765,6 +865,7 @@ app.patch("/api/users/:id", async (request) => {
   requireRoles(request, ["admin"]);
   const id = z.object({ id: z.string() }).parse(request.params).id;
   const body = userPatchSchema.parse(request.body);
+  if (body.password) validatePassword(body.password);
   await ensureCanChangeAdmin(id, { role: body.role, active: body.active });
   const { password, username, name, position, ...rest } = body;
   const user = await prisma.user.update({
@@ -965,8 +1066,11 @@ documentPost("/api/documents", async (request) => {
   if (requestKey) {
     await prisma.$executeRaw`INSERT INTO settings (\`key\`, value, updated_at) VALUES (${requestKey}, 'null', NOW()) ON DUPLICATE KEY UPDATE updated_at = updated_at`;
     const previous = await prisma.setting.findUniqueOrThrow({ where: { key: requestKey } });
-    if (typeof previous.value === "string" && previous.value !== "null")
+    if (typeof previous.value === "string" && previous.value !== "null") {
+      // The original public token is deliberately never stored in plaintext. A retry must
+      // therefore return the same document without silently rotating an already-issued token.
       return mapDocument(await findDocument(previous.value));
+    }
   }
   const documentType = await prisma.documentType.findFirst({
     where: { id: body.typeId, officeId: actor.officeId },
@@ -977,6 +1081,7 @@ documentPost("/api/documents", async (request) => {
     select: { code: true },
   });
   const trackingCode = await generateTrackingCode(originOffice.code);
+  const publicTrackingToken = await newUniquePublicToken();
   const qrCode = `QR-${trackingCode.substring(trackingCode.indexOf("-") + 1)}`;
   const qrPayload = JSON.stringify({ trackingCode, qrCode });
   if (!documentType.active) throw app.httpErrors.badRequest("Select an active document type.");
@@ -988,6 +1093,8 @@ documentPost("/api/documents", async (request) => {
       trackingCode,
       qrCode,
       qrPayload,
+      publicTokenHash: publicTokenHash(publicTrackingToken),
+      publicTokenIssuedAt: new Date(),
       title: body.title,
       subject: body.subject,
       typeId: body.typeId,
@@ -1028,7 +1135,7 @@ documentPost("/api/documents", async (request) => {
   if (requestKey)
     await prisma.setting.update({ where: { key: requestKey }, data: { value: document.id } });
   await audit(request, "document.registered", trackingCode);
-  return mapDocument(document);
+  return { ...mapDocument(document), publicTrackingToken };
 });
 
 documentPost("/api/documents/:id/void", async (request) => {
@@ -1118,9 +1225,7 @@ documentPost("/api/documents/:id/receive", async (request) => {
     throw app.httpErrors.conflict("Document changed since you opened it. Refresh and try again.");
   const scannerSettings = await readSettingsSection("scanner");
   const isWrongOffice =
-    actor.role !== "admin" &&
-    document.nextOfficeId !== null &&
-    document.nextOfficeId !== actor.officeId;
+    document.nextOfficeId !== null && document.nextOfficeId !== actor.officeId;
   if (isWrongOffice && scannerSettings.blockWrongOfficeReceipts === true) {
     throw app.httpErrors.forbidden("Document is not expected at your office.");
   }
@@ -1331,40 +1436,45 @@ app.get("/api/scans/resolve", async (request) => {
 });
 
 app.get("/api/public/track", async (request) => {
-  const code = readQrValue(z.object({ code: z.string().min(1) }).parse(request.query).code);
+  enforceRateLimit(`public-track:${clientIp(request)}`, security.publicTrackIpLimit, 60_000);
+  const parsed = z.object({ token: z.string().min(24).max(128) }).safeParse(request.query);
+  if (!parsed.success) throw app.httpErrors.notFound("Tracking reference not found.");
+  const token = parsed.data.token;
   const document = await prisma.document.findFirst({
-    where: { OR: [{ qrCode: code }, { trackingCode: code }] },
-    include: documentInclude,
+    where: { publicTokenHash: publicTokenHash(token), publicTokenRevokedAt: null },
+    select: { trackingCode: true, status: true, updatedAt: true },
   });
-  if (!document) throw app.httpErrors.notFound("Document not found.");
-  const mapped = mapDocument(document);
-  const officeRefs = await prisma.office.findMany({ select: { id: true, name: true } });
-  const type = await prisma.documentType.findUnique({
-    where: { id: document.typeId },
-    select: { name: true },
+  if (!document) throw app.httpErrors.notFound("Tracking reference not found.");
+  const status = ["completed", "filed"].includes(document.status)
+    ? "completed"
+    : document.status === "voided"
+      ? "unavailable"
+      : document.status === "in_transit"
+        ? "in_transit"
+        : "active";
+  return { trackingReference: document.trackingCode, status, updatedAt: document.updatedAt.toISOString() };
+});
+
+documentPost("/api/documents/:id/public-token/rotate", async (request) => {
+  requireRoles(request, ["admin"]);
+  const id = z.object({ id: z.string() }).parse(request.params).id;
+  const document = await findDocument(id);
+  const token = await newUniquePublicToken();
+  await prisma.document.update({
+    where: { id },
+    data: { publicTokenHash: publicTokenHash(token), publicTokenIssuedAt: new Date(), publicTokenRevokedAt: null },
   });
-  return {
-    officeNames: Object.fromEntries(officeRefs.map((office) => [office.id, office.name])),
-    typeName: type?.name,
-    nextOfficeId: mapped.nextOfficeId,
-    id: mapped.id,
-    trackingCode: mapped.trackingCode,
-    qrCode: mapped.qrCode,
-    title: mapped.title,
-    typeId: mapped.typeId,
-    status: mapped.status,
-    currentOfficeId: mapped.currentOfficeId,
-    updatedAt: mapped.updatedAt,
-    events: mapped.events.map(({ id, action, fromOfficeId, toOfficeId, timestamp }) => ({
-      id,
-      documentId: mapped.id,
-      actorId: "system",
-      action,
-      fromOfficeId,
-      toOfficeId,
-      timestamp,
-    })),
-  };
+  await audit(request, "document.public_token_rotated", document.trackingCode, "medium");
+  return { token };
+});
+
+documentPost("/api/documents/:id/public-token/revoke", async (request) => {
+  requireRoles(request, ["admin"]);
+  const id = z.object({ id: z.string() }).parse(request.params).id;
+  const document = await findDocument(id);
+  await prisma.document.update({ where: { id }, data: { publicTokenRevokedAt: new Date() } });
+  await audit(request, "document.public_token_revoked", document.trackingCode, "medium");
+  return { ok: true };
 });
 
 app.get("/api/notifications", async (request) => {
@@ -1580,7 +1690,7 @@ app.get("/api/documents/:id/slip", async (request, reply) => {
     .barcode-slot{height:66px;margin-top:10px;border:1px solid #111;display:flex;flex-direction:column;align-items:stretch;justify-content:center;gap:3px;padding:5px 8px}
     .barcode{display:block;width:100%;height:40px}
     .barcode-label{margin:0;text-align:center;font:10px/1 monospace}
-  </style></head><body><div class="slip"><h1 class="brand">${escapeHtml(institutionName)}</h1><div class="main"><img class="qr" src="${qr}" alt="QR code"><div class="details"><p class="tracking"><strong>${escapeHtml(document.trackingCode)}</strong></p><p class="title">${escapeHtml(document.title)}</p></div></div><div class="barcode-slot" data-barcode-format="code128"><img class="barcode" src="${barcode}" alt="Code 128 barcode for ${escapeHtml(document.trackingCode)}"><p class="barcode-label">${escapeHtml(document.trackingCode)}</p></div></div><script>document.title="";window.print()</script></body></html>`;
+  </style></head><body><div class="slip"><h1 class="brand">${escapeHtml(institutionName)}</h1><div class="main"><img class="qr" src="${qr}" alt="QR code"><div class="details"><p class="tracking"><strong>${escapeHtml(document.trackingCode)}</strong></p><p class="title">${escapeHtml(document.title)}</p></div></div><div class="barcode-slot" data-barcode-format="code128"><img class="barcode" src="${barcode}" alt="Code 128 barcode for ${escapeHtml(document.trackingCode)}"><p class="barcode-label">${escapeHtml(document.trackingCode)}</p></div></div><script src="/print-routing-slip.js"></script></body></html>`;
 });
 
 function csvCell(value: string) {

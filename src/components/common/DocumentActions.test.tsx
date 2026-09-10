@@ -165,6 +165,24 @@ describe("void action", () => {
 });
 
 describe("deliberate QR/barcode/manual scans", () => {
+  it("does not autofocus the manual scanner field on touch devices", async () => {
+    const originalMatchMedia = Object.getOwnPropertyDescriptor(window, "matchMedia");
+    Object.defineProperty(window, "matchMedia", {
+      configurable: true,
+      value: vi.fn().mockReturnValue({ matches: false }),
+    });
+
+    try {
+      render(<ScanPage />);
+      const input = screen.getByLabelText("QR or barcode");
+      await new Promise((resolve) => window.setTimeout(resolve, 0));
+      expect(document.activeElement).not.toBe(input);
+    } finally {
+      if (originalMatchMedia) Object.defineProperty(window, "matchMedia", originalMatchMedia);
+      else delete (window as { matchMedia?: typeof window.matchMedia }).matchMedia;
+    }
+  });
+
   it("keeps the scanner input focused while no scan action is in progress", async () => {
     render(<ScanPage />);
     const input = screen.getByLabelText("QR or barcode");

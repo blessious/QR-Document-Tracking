@@ -27,19 +27,29 @@ function proxyRequest(clientRequest, clientResponse) {
       headers: {
         ...clientRequest.headers,
         host: target.host,
+        "x-forwarded-for": clientRequest.socket.remoteAddress ?? "",
         "x-forwarded-host": clientRequest.headers.host,
         "x-forwarded-proto": "https",
+        forwarded: `for=${JSON.stringify(clientRequest.socket.remoteAddress ?? "unknown")};proto=https`,
       },
     },
     (proxyResponse) => {
-      clientResponse.writeHead(proxyResponse.statusCode ?? 502, proxyResponse.headers);
+      clientResponse.writeHead(proxyResponse.statusCode ?? 502, {
+        ...proxyResponse.headers,
+        "content-security-policy": "default-src 'self'; base-uri 'self'; frame-ancestors 'none'; object-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self'; font-src 'self' data:; form-action 'self'",
+        "permissions-policy": "camera=(self), microphone=(), geolocation=()",
+        "referrer-policy": "no-referrer",
+        "strict-transport-security": "max-age=31536000; includeSubDomains",
+        "x-content-type-options": "nosniff",
+        "x-frame-options": "DENY",
+      });
       proxyResponse.pipe(clientResponse);
     },
   );
 
-  proxy.on("error", (error) => {
+  proxy.on("error", () => {
     clientResponse.writeHead(502, { "content-type": "text/plain; charset=utf-8" });
-    clientResponse.end(`LGU DocTrack proxy error: ${error.message}`);
+    clientResponse.end("LGU DocTrack is temporarily unavailable.");
   });
 
   clientRequest.pipe(proxy);
