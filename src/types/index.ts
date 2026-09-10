@@ -7,7 +7,7 @@ export type UserRole = "admin" | "office_head" | "staff" | "receiving";
 export interface User {
   id: string;
   name: string;
-  email: string;
+  username: string;
   role: UserRole;
   officeId: string;
   position: string;
@@ -20,9 +20,8 @@ export interface Office {
   id: string;
   code: string;
   name: string;
-  head: string;
   location: string;
-  contact: string;
+  keywords: string;
   active: boolean;
   staffCount: number;
 }
@@ -35,7 +34,8 @@ export type DocumentStatus =
   | "on_hold"
   | "returned"
   | "completed"
-  | "filed";
+  | "filed"
+  | "voided";
 
 export type Priority = "routine" | "urgent" | "rush";
 
@@ -43,8 +43,13 @@ export interface DocumentType {
   id: string;
   name: string;
   code: string;
-  defaultWorkflowId: string;
-  retentionYears: number;
+  active?: boolean;
+}
+
+export interface RoutingPurpose {
+  id: string;
+  name: string;
+  active?: boolean;
 }
 
 export interface TrackingEvent {
@@ -59,29 +64,24 @@ export interface TrackingEvent {
     | "returned"
     | "completed"
     | "filed"
-    | "wrong_office";
+    | "wrong_office"
+    | "voided";
   fromOfficeId?: string | undefined;
   toOfficeId?: string | undefined;
   actorId: string;
+  actorName?: string | undefined;
   remarks?: string | undefined;
   timestamp: string;
 }
 
-export interface WorkflowStep {
+export interface DocumentAttachment {
   id: string;
-  name: string;
-  officeId: string;
-  slaHours: number;
-  required: boolean;
-}
-
-export interface Workflow {
-  id: string;
-  name: string;
-  description: string;
-  active: boolean;
-  steps: WorkflowStep[];
-  documentsUsing: number;
+  documentId: string;
+  fileName: string;
+  mimeType: string;
+  size: number;
+  uploadedBy: string;
+  createdAt: string;
 }
 
 export interface TrackedDocument {
@@ -90,13 +90,13 @@ export interface TrackedDocument {
   qrCode: string;
   title: string;
   typeId: string;
+  typeName?: string;
+  typeCode?: string;
   status: DocumentStatus;
   priority: Priority;
   originOfficeId: string;
   currentOfficeId: string;
   nextOfficeId?: string | undefined;
-  workflowId: string;
-  currentStepIndex: number;
   createdBy: string;
   createdAt: string;
   updatedAt: string;
@@ -106,6 +106,7 @@ export interface TrackedDocument {
   requester: string;
   pageCount: number;
   fileLocation?: string | undefined;
+  attachments: DocumentAttachment[];
   events: TrackingEvent[];
 }
 
@@ -134,4 +135,4 @@ export interface Session {
   loggedInAt: string;
 }
 
-export type ScanOutcome = "receive" | "dispatch" | "wrong_office" | "unknown";
+export type ScanOutcome = "receive" | "dispatch" | "wrong_office" | "unknown" | "unavailable";

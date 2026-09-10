@@ -1,0 +1,231 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  admin
+  office_head
+  staff
+  receiving
+}
+
+enum DocumentStatus {
+  registered
+  in_transit
+  received
+  in_process
+  on_hold
+  returned
+  completed
+  filed
+  voided
+}
+
+enum Priority {
+  routine
+  urgent
+  rush
+}
+
+enum TrackingAction {
+  registered
+  dispatched
+  received
+  processed
+  held
+  returned
+  completed
+  filed
+  wrong_office
+  voided
+}
+
+enum NotificationKind {
+  info
+  warning
+  success
+  danger
+}
+
+enum AuditSeverity {
+  low
+  medium
+  high
+}
+
+model User {
+  id             String               @id @default(cuid())
+  name           String
+  username       String               @unique @map("email")
+  passwordHash   String               @map("password_hash")
+  role           UserRole
+  officeId       String               @map("office_id")
+  position       String
+  active         Boolean              @default(true)
+  lastLogin      DateTime?            @map("last_login")
+  avatarInitials String               @map("avatar_initials")
+  createdAt      DateTime             @default(now()) @map("created_at")
+  updatedAt      DateTime             @updatedAt @map("updated_at")
+  office         Office               @relation(fields: [officeId], references: [id])
+  createdDocs    Document[]           @relation("DocumentCreator")
+  events         TrackingEvent[]
+  auditEntries   AuditEntry[]
+  notifications  Notification[]
+  attachments    DocumentAttachment[]
+
+  @@map("users")
+}
+
+model Office {
+  id            String         @id @default(cuid())
+  code          String         @unique
+  name          String
+  location      String
+  keywords      String         @db.Text
+  active        Boolean        @default(true)
+  createdAt     DateTime       @default(now()) @map("created_at")
+  updatedAt     DateTime       @updatedAt @map("updated_at")
+  users         User[]
+  documentTypes DocumentType[]
+  routingPurposes RoutingPurpose[]
+
+  @@map("offices")
+}
+
+model DocumentType {
+  id        String     @id @default(cuid())
+  name      String
+  code      String
+  officeId  String     @map("office_id")
+  active    Boolean    @default(true)
+  createdAt DateTime   @default(now()) @map("created_at")
+  updatedAt DateTime   @updatedAt @map("updated_at")
+  office    Office     @relation(fields: [officeId], references: [id])
+  documents Document[]
+
+  @@unique([officeId, code])
+  @@index([officeId, active])
+  @@map("document_types")
+}
+
+model RoutingPurpose {
+  id        String   @id @default(cuid())
+  name      String
+  officeId  String   @map("office_id")
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+  office    Office   @relation(fields: [officeId], references: [id])
+
+  @@unique([officeId, name])
+  @@index([officeId, active])
+  @@map("routing_purposes")
+}
+
+model Document {
+  id              String               @id @default(cuid())
+  trackingCode    String               @unique @map("tracking_code")
+  qrCode          String               @unique @map("qr_code")
+  qrPayload       String               @unique @map("qr_payload")
+  title           String
+  subject         String               @db.Text
+  typeId          String               @map("type_id")
+  status          DocumentStatus       @default(registered)
+  priority        Priority             @default(routine)
+  originOfficeId  String               @map("origin_office_id")
+  currentOfficeId String               @map("current_office_id")
+  nextOfficeId    String?              @map("next_office_id")
+  createdById     String               @map("created_by_id")
+  dueAt           DateTime             @map("due_at")
+  remarks         String?              @db.Text
+  requester       String
+  pageCount       Int                  @map("page_count")
+  fileLocation    String?              @map("file_location")
+  createdAt       DateTime             @default(now()) @map("created_at")
+  updatedAt       DateTime             @updatedAt @map("updated_at")
+  type            DocumentType         @relation(fields: [typeId], references: [id])
+  createdBy       User                 @relation("DocumentCreator", fields: [createdById], references: [id])
+  events          TrackingEvent[]
+  notifications   Notification[]
+  attachments     DocumentAttachment[]
+
+  @@index([status])
+  @@index([currentOfficeId])
+  @@index([nextOfficeId])
+  @@map("documents")
+}
+
+model DocumentAttachment {
+  id           String   @id @default(cuid())
+  documentId   String   @map("document_id")
+  fileName     String   @map("file_name")
+  mimeType     String   @map("mime_type")
+  size         Int
+  dataUrl      String   @map("data_url") @db.LongText
+  uploadedById String   @map("uploaded_by_id")
+  createdAt    DateTime @default(now()) @map("created_at")
+  document     Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  uploadedBy   User     @relation(fields: [uploadedById], references: [id])
+
+  @@index([documentId])
+  @@map("document_attachments")
+}
+
+model TrackingEvent {
+  id           String         @id @default(cuid())
+  documentId   String         @map("document_id")
+  action       TrackingAction
+  fromOfficeId String?        @map("from_office_id")
+  toOfficeId   String?        @map("to_office_id")
+  actorId      String         @map("actor_id")
+  remarks      String?        @db.Text
+  timestamp    DateTime       @default(now())
+  document     Document       @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  actor        User           @relation(fields: [actorId], references: [id])
+
+  @@index([documentId, timestamp])
+  @@map("tracking_events")
+}
+
+model Notification {
+  id         String           @id @default(cuid())
+  title      String
+  body       String           @db.Text
+  kind       NotificationKind
+  read       Boolean          @default(false)
+  userId     String?          @map("user_id")
+  documentId String?          @map("document_id")
+  timestamp  DateTime         @default(now())
+  user       User?            @relation(fields: [userId], references: [id])
+  document   Document?        @relation(fields: [documentId], references: [id])
+
+  @@index([userId, read])
+  @@map("notifications")
+}
+
+model AuditEntry {
+  id        String        @id @default(cuid())
+  actorId   String?       @map("actor_id")
+  action    String
+  target    String
+  ip        String
+  timestamp DateTime      @default(now())
+  severity  AuditSeverity @default(low)
+  actor     User?         @relation(fields: [actorId], references: [id])
+
+  @@index([timestamp])
+  @@map("audit_entries")
+}
+
+model Setting {
+  key       String   @id
+  value     Json
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("settings")
+}

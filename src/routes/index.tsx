@@ -1,13 +1,12 @@
-import { useState } from "react";
-import { createFileRoute, useNavigate, Link } from "@tanstack/react-router";
-import { QrCode, ShieldCheck, LogIn, Search } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { users } from "@/data/mock";
-import { officeName } from "@/services/api";
+import { ThemeToggle } from "@/components/common/ThemeToggle";
+import { useIsMobile } from "@/hooks/use-mobile";
+import { ROLE_HOME } from "@/lib/permissions";
 import { useApp } from "@/store/app-store";
+import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
+import { ArrowRight, Eye, EyeOff, Search } from "lucide-react";
+import { useState } from "react";
 
 export const Route = createFileRoute("/")({
   head: () => ({
@@ -30,144 +29,156 @@ export const Route = createFileRoute("/")({
   component: LoginPage,
 });
 
-function LoginPage() {
-  const { login, loginAs } = useApp();
+export function LoginPage() {
+  const { login } = useApp();
+  const isMobile = useIsMobile();
   const navigate = useNavigate();
-  const [email, setEmail] = useState("admin@lgu.gov.ph");
-  const [password, setPassword] = useState("demo1234");
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState("");
 
-  const submit = (e: React.FormEvent) => {
+  const submit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!email.trim() || !password.trim()) {
-      setError("Enter both your government e-mail and password.");
+    if (!username.trim() || !password.trim()) {
+      setError("Enter both your username and password.");
       return;
     }
-    const user = login(email);
-    navigate({ to: user.role === "receiving" ? "/scanner" : "/dashboard" });
+    try {
+      const user = await login(username, password);
+      const shouldOpenScanner =
+        isMobile ||
+        (typeof window !== "undefined" && window.matchMedia("(max-width: 767px)").matches);
+      navigate({ to: shouldOpenScanner ? "/scanner" : ROLE_HOME[user.role] });
+    } catch {
+      setError("Invalid username or password.");
+    }
   };
 
   return (
-    <div className="grid min-h-screen lg:grid-cols-2">
-      <div className="relative hidden flex-col justify-between bg-sidebar p-12 text-sidebar-foreground lg:flex">
-        <div className="flex items-center gap-3">
-          <span className="flex size-10 items-center justify-center rounded-md bg-sidebar-primary text-sidebar-primary-foreground">
-            <QrCode className="size-5" aria-hidden />
-          </span>
-          <div>
-            <p className="font-semibold">LGU DocTrack</p>
-            <p className="text-xs text-sidebar-foreground/60">City Government Records System</p>
-          </div>
-        </div>
-        <div className="max-w-md space-y-5">
-          <h2 className="text-3xl font-semibold tracking-tight">
-            Every document accounted for, from window to archive.
-          </h2>
-          <p className="text-sm text-sidebar-foreground/70">
-            QR-labelled routing slips, office-to-office custody logs, SLA monitoring and a mobile receiving
-            scanner — all in one institutional workspace.
-          </p>
-          <ul className="space-y-2 text-sm text-sidebar-foreground/80">
-            <li className="flex items-center gap-2">
-              <ShieldCheck className="size-4" aria-hidden /> Full custody audit trail per document
-            </li>
-            <li className="flex items-center gap-2">
-              <QrCode className="size-4" aria-hidden /> Receive and dispatch in two taps
-            </li>
-            <li className="flex items-center gap-2">
-              <Search className="size-4" aria-hidden /> Public tracking by reference code
-            </li>
-          </ul>
-        </div>
-        <p className="text-xs text-sidebar-foreground/50">
-          Frontend prototype · no live backend connected
-        </p>
+    <div className="relative grid min-h-screen min-h-[100svh] place-items-center overflow-hidden bg-background p-4 text-foreground sm:p-6">
+      <img
+        src="/login-qr-tracking-illustration.png"
+        alt=""
+        className="absolute inset-0 h-full w-full object-cover object-center opacity-[0.16] blur-[1px]"
+      />
+      <div className="absolute inset-0 bg-background/80 backdrop-blur-[1px]" />
+
+      <div className="absolute top-[calc(1.25rem+env(safe-area-inset-top))] right-[calc(1.25rem+env(safe-area-inset-right))] z-20">
+        <ThemeToggle />
       </div>
 
-      <div className="flex items-center justify-center px-4 py-12 sm:px-8">
-        <div className="w-full max-w-md space-y-6">
-          <div className="lg:hidden">
-            <span className="flex size-10 items-center justify-center rounded-md bg-primary text-primary-foreground">
-              <QrCode className="size-5" aria-hidden />
-            </span>
-          </div>
-          <div>
-            <h1 className="text-2xl font-semibold tracking-tight">Sign in to LGU DocTrack</h1>
-            <p className="mt-1 text-sm text-muted-foreground">
-              Use your government-issued account to continue.
-            </p>
+      <main className="relative z-10 w-full max-w-5xl overflow-hidden rounded-2xl border border-border/80 bg-card shadow-2xl md:grid md:min-h-[440px] md:grid-cols-[330px_minmax(0,1fr)] lg:min-h-[520px] lg:grid-cols-[360px_minmax(0,1fr)]">
+        <section className="relative min-h-56 overflow-hidden bg-muted md:hidden">
+          <img
+            src="/login-qr-tracking-illustration.png"
+            alt=""
+            className="absolute inset-0 h-full w-full object-cover object-[58%_center]"
+          />
+        </section>
+
+        <section className="relative z-10 flex min-w-0 flex-col justify-center px-6 py-8 sm:px-9 md:px-10">
+          <div className="mb-10 flex items-center gap-3">
+            <img
+              src="/lgu-logo.png"
+              alt="Municipality of Boac logo"
+              className="size-12 shrink-0 object-contain"
+            />
+            <div className="min-w-0">
+              <p className="truncate text-sm font-semibold tracking-tight">Municipality of Boac</p>
+              <p className="truncate text-xs text-muted-foreground">QR document tracking</p>
+            </div>
           </div>
 
-          <form onSubmit={submit} className="space-y-4" noValidate>
-            <div className="space-y-2">
-              <Label htmlFor="email">Government e-mail</Label>
+          <div className="mb-7">
+            <div className="mb-2 flex items-center gap-2 text-[10px] font-semibold tracking-[0.16em] text-primary uppercase">
+              <span className="size-1.5 rounded-full bg-primary" />
+              Secure workspace
+            </div>
+            <h1 className="text-2xl font-semibold tracking-tight text-foreground">Sign in</h1>
+            <p className="mt-2 text-sm text-muted-foreground">Welcome to LGU QR Tracking</p>
+          </div>
+
+          <form onSubmit={submit} className="space-y-3" noValidate>
+            <div>
+              <label htmlFor="username" className="sr-only">
+                Username
+              </label>
               <Input
-                id="email"
-                type="email"
+                id="username"
+                type="text"
                 autoComplete="username"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                placeholder="name@lgu.gov.ph"
+                value={username}
+                onChange={(e) => setUsername(e.target.value)}
+                placeholder="Username"
+                className="h-11 rounded-lg border-input bg-background px-4 text-sm shadow-none placeholder:text-muted-foreground"
               />
             </div>
-            <div className="space-y-2">
-              <Label htmlFor="password">Password</Label>
+            <div className="relative">
+              <label htmlFor="password" className="sr-only">
+                Password
+              </label>
               <Input
                 id="password"
-                type="password"
+                type={showPassword ? "text" : "password"}
                 autoComplete="current-password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
+                placeholder="Password"
+                className="password-input h-11 rounded-lg border-input bg-background px-4 pr-11 text-sm shadow-none placeholder:text-muted-foreground"
               />
+              <button
+                type="button"
+                className="absolute inset-y-0 right-0 flex w-11 items-center justify-center rounded-r-lg text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                onClick={() => setShowPassword((value) => !value)}
+                aria-label={showPassword ? "Hide password" : "Show password"}
+              >
+                {showPassword ? (
+                  <EyeOff className="size-4" aria-hidden />
+                ) : (
+                  <Eye className="size-4" aria-hidden />
+                )}
+              </button>
             </div>
-            {error ? (
-              <p role="alert" className="text-sm text-destructive">
-                {error}
-              </p>
-            ) : null}
-            <Button type="submit" className="w-full">
-              <LogIn className="size-4" /> Sign in
+            <div className="min-h-5 text-right">
+              {error ? (
+                <p role="alert" className="mb-1 text-left text-xs text-destructive">
+                  {error}
+                </p>
+              ) : null}
+              <Link
+                to="/track"
+                className="text-xs font-medium text-primary underline-offset-4 hover:underline"
+              >
+                Track document
+              </Link>
+            </div>
+            <Button type="submit" className="h-11 w-full rounded-lg shadow-none">
+              Login
+              <ArrowRight className="size-4" />
             </Button>
           </form>
+        </section>
 
-          <Card>
-            <CardHeader className="pb-3">
-              <CardTitle className="text-sm">Demo accounts</CardTitle>
-              <CardDescription>Click a role to enter the prototype instantly.</CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-2">
-              {users.slice(0, 4).map((u) => (
-                <button
-                  key={u.id}
-                  type="button"
-                  onClick={() => {
-                    loginAs(u);
-                    navigate({ to: u.role === "receiving" ? "/scanner" : "/dashboard" });
-                  }}
-                  className="flex w-full items-center gap-3 rounded-md border border-border px-3 py-2 text-left transition-colors hover:bg-accent"
-                >
-                  <span className="flex size-8 items-center justify-center rounded-full bg-primary/10 text-xs font-semibold text-primary">
-                    {u.avatarInitials}
-                  </span>
-                  <span className="min-w-0 flex-1">
-                    <span className="block truncate text-sm font-medium">{u.name}</span>
-                    <span className="block truncate text-xs text-muted-foreground">
-                      {u.position} · {officeName(u.officeId)}
-                    </span>
-                  </span>
-                </button>
-              ))}
-            </CardContent>
-          </Card>
-
-          <p className="text-center text-sm text-muted-foreground">
-            Tracking a document?{" "}
-            <Link to="/track" className="font-medium text-primary underline-offset-4 hover:underline">
-              Track without signing in
+        <section className="relative hidden overflow-hidden bg-muted md:block">
+          <img
+            src="/login-qr-tracking-illustration.png"
+            alt=""
+            className="absolute inset-0 h-full w-full object-cover object-[56%_center]"
+          />
+          <Button
+            variant="ghost"
+            size="icon"
+            asChild
+            className="absolute top-6 right-6 z-10 size-10 rounded-md bg-white/26 text-white backdrop-blur hover:bg-white/38 hover:text-white"
+            aria-label="Track document"
+          >
+            <Link to="/track">
+              <Search className="size-5" />
             </Link>
-          </p>
-        </div>
-      </div>
+          </Button>
+        </section>
+      </main>
     </div>
   );
 }

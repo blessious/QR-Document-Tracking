@@ -1,70 +1,75 @@
-import { useState } from "react";
 import { createFileRoute } from "@tanstack/react-router";
-import { toast } from "sonner";
-import { Send, PackageCheck } from "lucide-react";
-import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
-import { Label } from "@/components/ui/label";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { EmptyState } from "@/components/common/EmptyState";
-import { StatusBadge } from "@/components/common/StatusBadge";
 import { useApp } from "@/store/app-store";
-import { officeName } from "@/services/api";
-import { offices } from "@/data/mock";
-
-export const Route = createFileRoute("/scanner/dispatch")({
-  component: DispatchPage,
-});
-
+import { DocumentActions } from "@/components/common/DocumentActions";
+import { EmptyState } from "@/components/common/EmptyState";
+import { Card, CardContent } from "@/components/ui/card";
+import { FileUp } from "lucide-react";
+import { useDeferredValue, useMemo, useState } from "react";
+import { ListPagination, ListSearch, useListPagination } from "@/components/common/ListControls";
+export const Route = createFileRoute("/scanner/dispatch")({ component: DispatchPage });
 function DispatchPage() {
-  const { documents, session, dispatchDocument } = useApp();
-  const officeId = session?.officeId ?? "off-accounting";
-  const list = documents.filter((d) => d.currentOfficeId === officeId && !["completed", "filed", "in_transit"].includes(d.status));
-  const [target, setTarget] = useState<Record<string, string>>({});
-
+  const { documents, session } = useApp();
+  const list = documents.filter(
+    (d) =>
+      d.currentOfficeId === session?.officeId &&
+      ["registered", "received", "in_process", "returned"].includes(d.status),
+  );
+  const [q, setQ] = useState("");
+  const deferredQ = useDeferredValue(q);
+  const filteredList = useMemo(() => {
+    const query = deferredQ.trim().toLowerCase();
+    return query
+      ? list.filter((doc) => `${doc.trackingCode} ${doc.title}`.toLowerCase().includes(query))
+      : list;
+  }, [deferredQ, list]);
+  const pagination = useListPagination(filteredList, q);
   return (
     <div className="space-y-4">
       <div>
-        <h1 className="text-lg font-semibold">Dispatch documents</h1>
-        <p className="text-sm text-muted-foreground">Forward documents currently held by {officeName(officeId)}.</p>
+        <h1 className="text-xl font-semibold tracking-tight">Dispatch documents</h1>
+        <p className="mt-1 text-sm text-muted-foreground">
+          Select a document that is ready to move to its next office.
+        </p>
       </div>
-      {list.length === 0 ? (
-        <EmptyState icon={PackageCheck} title="Nothing to dispatch" description="Receive a document first, then forward it here." />
+      <div className="flex justify-end">
+        <ListSearch
+          value={q}
+          onChange={setQ}
+          placeholder="Search dispatch queue"
+          ariaLabel="Search dispatch queue"
+        />
+      </div>
+      {!filteredList.length ? (
+        <EmptyState
+          icon={FileUp}
+          title="No documents ready to dispatch"
+          description="Documents in your custody will appear here when they can move forward."
+        />
       ) : (
-        list.map((d) => (
-          <Card key={d.id}>
-            <CardContent className="space-y-3 p-4">
-              <div className="flex items-start justify-between gap-3">
-                <div className="min-w-0">
-                  <p className="font-mono text-xs text-muted-foreground">{d.trackingCode}</p>
-                  <p className="truncate text-sm font-medium">{d.title}</p>
-                </div>
-                <StatusBadge status={d.status} />
-              </div>
-              <div className="space-y-1.5">
-                <Label htmlFor={`t-${d.id}`}>Forward to</Label>
-                <Select value={target[d.id] ?? d.nextOfficeId ?? "off-records"} onValueChange={(v) => setTarget((p) => ({ ...p, [d.id]: v }))}>
-                  <SelectTrigger id={`t-${d.id}`}><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    {offices.map((o) => (
-                      <SelectItem key={o.id} value={o.id}>{o.name}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              <Button
-                className="h-11 w-full"
-                onClick={() => {
-                  const to = target[d.id] ?? d.nextOfficeId ?? "off-records";
-                  dispatchDocument(d.id, to);
-                  toast.success(`${d.trackingCode} dispatched to ${officeName(to)}.`);
-                }}
-              >
-                <Send className="size-4" /> Dispatch
-              </Button>
-            </CardContent>
-          </Card>
-        ))
+        <>
+          {pagination.pageItems.map((doc) => (
+            <Card key={doc.id}>
+              <CardContent className="space-y-3 p-4 sm:p-5">
+                <p className="text-sm font-medium">
+                  <span className="font-mono text-xs text-muted-foreground">
+                    {doc.trackingCode}
+                  </span>
+                  <span className="mx-2 text-muted-foreground">·</span>
+                  {doc.title}
+                </p>
+                <DocumentActions doc={doc} />
+              </CardContent>
+            </Card>
+          ))}
+          <ListPagination
+            page={pagination.page}
+            pageCount={pagination.pageCount}
+            pageSize={pagination.pageSize}
+            totalItems={filteredList.length}
+            itemLabel="dispatch documents"
+            onPageChange={pagination.setPage}
+          />
+        </>
       )}
     </div>
   );

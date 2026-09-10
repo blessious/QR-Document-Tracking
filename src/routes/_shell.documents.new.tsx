@@ -1,59 +1,139 @@
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { createFileRoute, useNavigate, Link } from "@tanstack/react-router";
 import { toast } from "sonner";
-import { ArrowLeft, CheckCircle2, Printer, QrCode } from "lucide-react";
+import { ArrowLeft, CheckCircle2, Paperclip, Plus, Printer, QrCode } from "lucide-react";
 import { PageHeader } from "@/components/common/PageHeader";
+import { BarcodePlaceholder } from "@/components/common/BarcodePlaceholder";
 import { QrPlaceholder } from "@/components/common/QrPlaceholder";
+import { FileUploadDropzone } from "@/components/common/FileUploadDropzone";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Separator } from "@/components/ui/separator";
-import { documentTypes, offices, workflows } from "@/data/mock";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { useApp } from "@/store/app-store";
-import { officeName } from "@/services/api";
+import { api, officeName, type AttachmentInput } from "@/services/api";
 import type { Priority, TrackedDocument } from "@/types";
+import { createClientId } from "@/lib/client-id";
 
 export const Route = createFileRoute("/_shell/documents/new")({
   head: () => ({
     meta: [
       { title: "Register a document — LGU DocTrack" },
-      { name: "description", content: "Capture document details, assign a routing workflow and print a QR routing slip." },
+      {
+        name: "description",
+        content: "Capture document details and print a QR and barcode routing slip.",
+      },
       { property: "og:title", content: "Register a document — LGU DocTrack" },
-      { property: "og:description", content: "Capture document details and print a QR routing slip." },
+      {
+        property: "og:description",
+        content: "Capture document details and print a QR and barcode routing slip.",
+      },
     ],
   }),
   component: RegisterPage,
 });
 
 function RegisterPage() {
-  const { registerDocument } = useApp();
+  const { registerDocument, documentTypes, refresh } = useApp();
   const navigate = useNavigate();
   const [step, setStep] = useState(1);
+  const [saving, setSaving] = useState(false);
+  const [requestId, setRequestId] = useState(() => createClientId());
   const [created, setCreated] = useState<TrackedDocument | null>(null);
+  const [attachments, setAttachments] = useState<(AttachmentInput & { id: string })[]>([]);
+  const [typeDialogOpen, setTypeDialogOpen] = useState(false);
+  const [newTypeName, setNewTypeName] = useState("");
+  const [creatingType, setCreatingType] = useState(false);
   const [form, setForm] = useState({
     title: "",
     subject: "",
-    typeId: "dt-1",
+    typeId: documentTypes.find((type) => type.active !== false)?.id ?? "",
     priority: "routine" as Priority,
-    originOfficeId: "off-records",
-    nextOfficeId: "off-budget",
-    workflowId: "wf-1",
-    requester: "",
-    pageCount: "1",
     remarks: "",
   });
-  const set = (k: keyof typeof form, v: string) => setForm((f) => ({ ...f, [k]: v }));
-  const valid = form.title.trim().length > 3 && form.requester.trim().length > 1;
+  const set = (k: keyof typeof form, v: string | number) => setForm((f) => ({ ...f, [k]: v }));
+  const activeDocumentTypes = useMemo(
+    () => documentTypes.filter((type) => type.active !== false),
+    [documentTypes],
+  );
+  useEffect(() => {
+    const firstActiveDocumentType = activeDocumentTypes[0];
+    if (!form.typeId && firstActiveDocumentType) {
+      setForm((current) => ({ ...current, typeId: firstActiveDocumentType.id }));
+    }
+  }, [activeDocumentTypes, form.typeId]);
+  const valid = form.title.trim().length > 3 && !!form.typeId;
+  const createDocumentType = async () => {
+    if (!newTypeName.trim() || creatingType) return;
+    setCreatingType(true);
+    try {
+      const type = await api.createDocumentType({ name: newTypeName.trim() });
+      await refresh();
+      set("typeId", type.id);
+      setNewTypeName("");
+      setTypeDialogOpen(false);
+      toast.success(`${type.name} is ready to use.`);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not add the document type.");
+    } finally {
+      setCreatingType(false);
+    }
+  };
+  const chooseAttachments = async (files: File[]) => {
+    const validFiles = files.filter((file) => file.size <= 10 * 1024 * 1024);
+    if (validFiles.length !== files.length) {
+      toast.error("Each file must be 10 MB or smaller.");
+    }
+    if (!validFiles.length) return;
+
+    try {
+      const nextAttachments = await Promise.all(
+        validFiles.map(
+          (file) =>
+            new Promise<AttachmentInput & { id: string }>((resolve, reject) => {
+              const reader = new FileReader();
+              reader.onload = () =>
+                resolve({
+                  id: createClientId(),
+                  fileName: file.name,
+                  mimeType: file.type || "application/octet-stream",
+                  size: file.size,
+                  dataUrl: String(reader.result),
+                });
+              reader.onerror = () => reject(reader.error ?? new Error("Could not read file."));
+              reader.readAsDataURL(file);
+            }),
+        ),
+      );
+      setAttachments((current) => [...current, ...nextAttachments]);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not read the selected files.");
+    }
+  };
 
   if (created) {
     return (
       <>
         <PageHeader
           title="Document registered"
-          description="Print the QR routing slip and attach it to the physical document before dispatching."
+          description="Print the QR and barcode routing slip and attach it to the physical document before dispatching."
           actions={
             <Button variant="outline" asChild>
               <Link to="/documents">Back to registry</Link>
@@ -68,25 +148,45 @@ function RegisterPage() {
             <CardTitle className="mt-3">{created.trackingCode}</CardTitle>
             <CardDescription>{created.title}</CardDescription>
           </CardHeader>
-          <CardContent className="space-y-6">
-            <div className="flex flex-col items-center gap-3 rounded-lg border border-dashed border-border p-6">
-              <QrPlaceholder value={created.qrCode} size={160} />
-              <p className="font-mono text-sm">{created.qrCode}</p>
-              <p className="text-center text-xs text-muted-foreground">
-                Routing slip · {officeName(created.originOfficeId)} → {officeName(created.nextOfficeId)}
-              </p>
+          <CardContent className="space-y-4">
+            <div className="rounded-lg border border-dashed border-border p-4">
+              <div className="flex items-center gap-4">
+                <QrPlaceholder value={created.qrCode} size={120} />
+                <div className="min-w-0 space-y-1">
+                  <p className="font-mono text-sm font-semibold">{created.qrCode}</p>
+                  <p className="text-xs text-muted-foreground">
+                    Current custody: {officeName(created.currentOfficeId)}
+                  </p>
+                </div>
+              </div>
+              <BarcodePlaceholder value={created.trackingCode} className="mt-3" />
             </div>
             <div className="flex flex-wrap justify-center gap-2">
-              <Button onClick={() => toast.success("Routing slip sent to the label printer (mock).")}>
+              <Button
+                onClick={() =>
+                  window.open(api.routingSlipUrl(created.id), "_blank", "noopener,noreferrer")
+                }
+              >
                 <Printer className="size-4" /> Print routing slip
               </Button>
-              <Button variant="outline" onClick={() => navigate({ to: "/documents/$docId", params: { docId: created.id } })}>
+              <Button
+                variant="outline"
+                onClick={() => navigate({ to: "/documents/$docId", params: { docId: created.id } })}
+              >
                 Open document
               </Button>
               <Button
                 variant="ghost"
                 onClick={() => {
                   setCreated(null);
+                  setRequestId(createClientId());
+                  setForm((current) => ({
+                    ...current,
+                    title: "",
+                    subject: "",
+                    remarks: "",
+                  }));
+                  setAttachments([]);
                   setStep(1);
                 }}
               >
@@ -102,8 +202,8 @@ function RegisterPage() {
   return (
     <>
       <PageHeader
-        title="Register document"
-        description="Three quick steps: describe the document, choose its route, then generate the QR label."
+        title="Create Tracking Slip"
+        description="Describe the document, then generate its QR and barcode label."
         actions={
           <Button variant="outline" asChild>
             <Link to="/documents">
@@ -114,7 +214,7 @@ function RegisterPage() {
       />
 
       <ol className="flex flex-wrap items-center gap-3 text-sm">
-        {["Document details", "Routing", "QR label"].map((label, i) => (
+        {["Document details", "QR and barcode"].map((label, i) => (
           <li key={label} className="flex items-center gap-2">
             <span
               className={
@@ -125,7 +225,7 @@ function RegisterPage() {
               {i + 1}
             </span>
             <span className={step > i ? "font-medium" : "text-muted-foreground"}>{label}</span>
-            {i < 2 ? <Separator className="w-8" /> : null}
+            {i < 1 ? <Separator className="w-8" /> : null}
           </li>
         ))}
       </ol>
@@ -136,28 +236,59 @@ function RegisterPage() {
             <>
               <div className="space-y-2">
                 <Label htmlFor="title">Document title</Label>
-                <Input id="title" value={form.title} onChange={(e) => set("title", e.target.value)} placeholder="DV — Fuel and lubricants, September 2026" />
+                <Input
+                  id="title"
+                  value={form.title}
+                  onChange={(e) => set("title", e.target.value)}
+                />
               </div>
               <div className="space-y-2">
                 <Label htmlFor="subject">Subject / purpose</Label>
-                <Textarea id="subject" value={form.subject} onChange={(e) => set("subject", e.target.value)} rows={3} />
+                <Textarea
+                  id="subject"
+                  value={form.subject}
+                  onChange={(e) => set("subject", e.target.value)}
+                  rows={3}
+                />
               </div>
               <div className="grid gap-4 sm:grid-cols-2">
                 <div className="space-y-2">
-                  <Label>Document type</Label>
+                  <div className="flex items-center justify-between gap-2">
+                    <Label>Document type</Label>
+                    <Button
+                      variant="link"
+                      size="sm"
+                      className="h-auto px-0"
+                      onClick={() => setTypeDialogOpen(true)}
+                    >
+                      <Plus className="size-3.5" /> Add document type
+                    </Button>
+                  </div>
                   <Select value={form.typeId} onValueChange={(v) => set("typeId", v)}>
-                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select a document type" />
+                    </SelectTrigger>
                     <SelectContent>
-                      {documentTypes.map((t) => (
-                        <SelectItem key={t.id} value={t.id}>{t.name}</SelectItem>
-                      ))}
+                      {activeDocumentTypes.length ? (
+                        activeDocumentTypes.map((t) => (
+                          <SelectItem key={t.id} value={t.id}>
+                            {t.name}
+                          </SelectItem>
+                        ))
+                      ) : (
+                        <p className="px-2 py-1.5 text-sm text-muted-foreground">
+                          No document types yet. Add one to continue.
+                        </p>
+                      )}
                     </SelectContent>
                   </Select>
                 </div>
                 <div className="space-y-2">
                   <Label>Priority</Label>
                   <Select value={form.priority} onValueChange={(v) => set("priority", v)}>
-                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
                     <SelectContent>
                       <SelectItem value="routine">Routine</SelectItem>
                       <SelectItem value="urgent">Urgent</SelectItem>
@@ -165,104 +296,84 @@ function RegisterPage() {
                     </SelectContent>
                   </Select>
                 </div>
-                <div className="space-y-2">
-                  <Label htmlFor="requester">Requesting party</Label>
-                  <Input id="requester" value={form.requester} onChange={(e) => set("requester", e.target.value)} placeholder="General Services Office" />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="pages">Page count</Label>
-                  <Input id="pages" type="number" min={1} value={form.pageCount} onChange={(e) => set("pageCount", e.target.value)} />
-                </div>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="upload-document">Upload Document</Label>
+                <FileUploadDropzone
+                  id="upload-document"
+                  accept=".pdf,.doc,.docx,.xls,.xlsx,.jpg,.jpeg,.png"
+                  files={attachments}
+                  onFilesSelected={(files) => void chooseAttachments(files)}
+                  onRemove={(id) =>
+                    setAttachments((current) => current.filter((file) => file.id !== id))
+                  }
+                  onClear={() => setAttachments([])}
+                />
+                <p className="text-xs text-muted-foreground">
+                  Attach scanned or digital copies for reference. This is not required.
+                </p>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="remarks">Remarks (optional)</Label>
+                <Textarea
+                  id="remarks"
+                  rows={2}
+                  value={form.remarks}
+                  onChange={(e) => set("remarks", e.target.value)}
+                />
               </div>
             </>
           ) : null}
 
           {step === 2 ? (
-            <>
-              <div className="grid gap-4 sm:grid-cols-2">
-                <div className="space-y-2">
-                  <Label>Originating office</Label>
-                  <Select value={form.originOfficeId} onValueChange={(v) => set("originOfficeId", v)}>
-                    <SelectTrigger><SelectValue /></SelectTrigger>
-                    <SelectContent>
-                      {offices.map((o) => (
-                        <SelectItem key={o.id} value={o.id}>{o.name}</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="space-y-2">
-                  <Label>Next office</Label>
-                  <Select value={form.nextOfficeId} onValueChange={(v) => set("nextOfficeId", v)}>
-                    <SelectTrigger><SelectValue /></SelectTrigger>
-                    <SelectContent>
-                      {offices.map((o) => (
-                        <SelectItem key={o.id} value={o.id}>{o.name}</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-              </div>
-              <div className="space-y-2">
-                <Label>Routing workflow</Label>
-                <Select value={form.workflowId} onValueChange={(v) => set("workflowId", v)}>
-                  <SelectTrigger><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    {workflows.map((w) => (
-                      <SelectItem key={w.id} value={w.id}>{w.name}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="rounded-lg border border-border bg-muted/40 p-4">
-                <p className="text-xs font-semibold tracking-wide text-muted-foreground uppercase">Preview route</p>
-                <ol className="mt-3 space-y-2">
-                  {(workflows.find((w) => w.id === form.workflowId)?.steps ?? []).map((s, i) => (
-                    <li key={s.id} className="flex items-center gap-3 text-sm">
-                      <span className="flex size-6 items-center justify-center rounded-full bg-background text-xs ring-1 ring-border">{i + 1}</span>
-                      <span className="font-medium">{s.name}</span>
-                      <span className="text-muted-foreground">· {officeName(s.officeId)} · SLA {s.slaHours}h</span>
-                    </li>
-                  ))}
-                </ol>
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="remarks">Remarks (optional)</Label>
-                <Textarea id="remarks" rows={2} value={form.remarks} onChange={(e) => set("remarks", e.target.value)} />
-              </div>
-            </>
-          ) : null}
-
-          {step === 3 ? (
             <div className="space-y-4">
               <div className="flex items-center gap-3 rounded-lg border border-border p-4">
                 <QrCode className="size-5 text-primary" aria-hidden />
                 <p className="text-sm text-muted-foreground">
-                  A tracking code and QR reference will be generated on save. Print the slip and attach it to the
-                  document.
+                  A tracking code, QR reference, and Code 128 barcode will be generated on save.
+                  Print the slip and attach it to the document.
                 </p>
               </div>
               <dl className="grid gap-3 text-sm sm:grid-cols-2">
-                <div><dt className="text-muted-foreground">Title</dt><dd className="font-medium">{form.title || "—"}</dd></div>
-                <div><dt className="text-muted-foreground">Requester</dt><dd className="font-medium">{form.requester || "—"}</dd></div>
-                <div><dt className="text-muted-foreground">Origin</dt><dd className="font-medium">{officeName(form.originOfficeId)}</dd></div>
-                <div><dt className="text-muted-foreground">Next office</dt><dd className="font-medium">{officeName(form.nextOfficeId)}</dd></div>
-                <div><dt className="text-muted-foreground">Priority</dt><dd className="font-medium capitalize">{form.priority}</dd></div>
-                <div><dt className="text-muted-foreground">Pages</dt><dd className="font-medium">{form.pageCount}</dd></div>
+                <div>
+                  <dt className="text-muted-foreground">Title</dt>
+                  <dd className="font-medium">{form.title || "—"}</dd>
+                </div>
+                <div>
+                  <dt className="text-muted-foreground">Priority</dt>
+                  <dd className="font-medium capitalize">{form.priority}</dd>
+                </div>
+                <div className="sm:col-span-2">
+                  <dt className="text-muted-foreground">Uploaded documents</dt>
+                  <dd className="font-medium">
+                    {attachments.length ? (
+                      <ul className="space-y-1">
+                        {attachments.map((attachment) => (
+                          <li key={attachment.id} className="flex items-center gap-2">
+                            <Paperclip className="size-4 shrink-0 text-primary" aria-hidden />
+                            <span className="truncate">{attachment.fileName}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    ) : (
+                      "No files attached"
+                    )}
+                  </dd>
+                </div>
               </dl>
             </div>
           ) : null}
 
           <Separator />
-          <div className="flex justify-between">
+          <div className="flex flex-wrap justify-between gap-3">
             <Button variant="outline" disabled={step === 1} onClick={() => setStep((s) => s - 1)}>
               Back
             </Button>
-            {step < 3 ? (
+            {step < 2 ? (
               <Button
                 onClick={() => {
                   if (step === 1 && !valid) {
-                    toast.error("Add a document title and requesting party first.");
+                    toast.error("Enter a title and document type.");
                     return;
                   }
                   setStep((s) => s + 1);
@@ -272,22 +383,66 @@ function RegisterPage() {
               </Button>
             ) : (
               <Button
-                onClick={() => {
-                  const doc = registerDocument({
-                    ...form,
-                    pageCount: Number(form.pageCount) || 1,
-                    remarks: form.remarks || undefined,
-                  });
-                  setCreated(doc);
-                  toast.success(`${doc.trackingCode} registered.`);
+                disabled={saving}
+                onClick={async () => {
+                  if (saving) return;
+                  setSaving(true);
+                  try {
+                    const doc = await registerDocument({
+                      ...form,
+                      requestId,
+                      attachments: attachments.map(({ id: _id, ...attachment }) => attachment),
+                      remarks: form.remarks || undefined,
+                    });
+                    setCreated(doc);
+                    toast.success(`${doc.trackingCode} registered.`);
+                  } catch (error) {
+                    toast.error(error instanceof Error ? error.message : "Registration failed.");
+                  } finally {
+                    setSaving(false);
+                  }
                 }}
               >
-                Register & generate QR
+                Register & generate codes
               </Button>
             )}
           </div>
         </CardContent>
       </Card>
+
+      <Dialog open={typeDialogOpen} onOpenChange={setTypeDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Add document type</DialogTitle>
+            <DialogDescription>
+              This type is available only to your office. A short code is created automatically.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-2">
+            <Label htmlFor="new-document-type">Document type name</Label>
+            <Input
+              id="new-document-type"
+              value={newTypeName}
+              onChange={(event) => setNewTypeName(event.target.value)}
+              placeholder="Job Order Payroll"
+              onKeyDown={(event) => {
+                if (event.key === "Enter") void createDocumentType();
+              }}
+            />
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setTypeDialogOpen(false)}>
+              Cancel
+            </Button>
+            <Button
+              disabled={!newTypeName.trim() || creatingType}
+              onClick={() => void createDocumentType()}
+            >
+              Add type
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </>
   );
 }

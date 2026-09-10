@@ -1,3 +1,4 @@
+import { toast } from "sonner";
 import { useState } from "react";
 import { createFileRoute } from "@tanstack/react-router";
 import { Search, MapPin, Clock, FileQuestion } from "lucide-react";
@@ -10,16 +11,23 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { useApp } from "@/store/app-store";
-import { docTypeName, officeName } from "@/services/api";
+import { api, docTypeName, officeName } from "@/services/api";
 import { formatDateTime } from "@/lib/format";
+import type { TrackedDocument } from "@/types";
 
 export const Route = createFileRoute("/_shell/track")({
   head: () => ({
     meta: [
       { title: "Track a document — LGU DocTrack" },
-      { name: "description", content: "Enter a tracking or QR reference code to see where a document currently sits." },
+      {
+        name: "description",
+        content: "Enter a tracking or QR reference code to see where a document currently sits.",
+      },
       { property: "og:title", content: "Track a document — LGU DocTrack" },
-      { property: "og:description", content: "Enter a tracking or QR reference code to locate a document." },
+      {
+        property: "og:description",
+        content: "Enter a tracking or QR reference code to locate a document.",
+      },
     ],
   }),
   component: TrackPage,
@@ -29,11 +37,9 @@ function TrackPage() {
   const { documents } = useApp();
   const [code, setCode] = useState("");
   const [searched, setSearched] = useState(false);
-  const match = documents.find(
-    (d) =>
-      d.trackingCode.toLowerCase() === code.trim().toLowerCase() ||
-      d.qrCode.toLowerCase() === code.trim().toLowerCase(),
-  );
+  const [match, setMatch] = useState<
+    (TrackedDocument & { officeNames?: Record<string, string>; typeName?: string }) | null
+  >(null);
 
   return (
     <>
@@ -46,9 +52,17 @@ function TrackPage() {
         <CardContent className="p-6">
           <form
             className="flex flex-col gap-3 sm:flex-row"
-            onSubmit={(e) => {
+            onSubmit={async (e) => {
               e.preventDefault();
               setSearched(true);
+              try {
+                setMatch(await api.publicTrack(code.trim()));
+              } catch (error) {
+                setMatch(null);
+                toast.error(
+                  error instanceof Error ? error.message : "Tracking service unavailable.",
+                );
+              }
             }}
           >
             <Input
@@ -62,7 +76,7 @@ function TrackPage() {
             </Button>
           </form>
           <p className="mt-3 text-xs text-muted-foreground">
-            Sample codes: LGU-2026-000418 · LGU-2026-000401 · QR-000422
+            Use the code printed on your routing slip.
           </p>
         </CardContent>
       </Card>
@@ -82,7 +96,7 @@ function TrackPage() {
               <div>
                 <CardTitle className="text-base">{match.title}</CardTitle>
                 <CardDescription>
-                  {match.trackingCode} · {docTypeName(match.typeId)}
+                  {match.trackingCode} · {match.typeName ?? docTypeName(match.typeId)}
                 </CardDescription>
               </div>
               <StatusBadge status={match.status} />
@@ -93,7 +107,10 @@ function TrackPage() {
                   <MapPin className="mt-0.5 size-4 text-primary" aria-hidden />
                   <div>
                     <p className="text-xs text-muted-foreground">Currently at</p>
-                    <p className="text-sm font-medium">{officeName(match.currentOfficeId)}</p>
+                    <p className="text-sm font-medium">
+                      {match.officeNames?.[match.currentOfficeId] ??
+                        officeName(match.currentOfficeId)}
+                    </p>
                   </div>
                 </div>
                 <div className="flex items-start gap-3 rounded-lg border border-border p-4">
@@ -104,7 +121,7 @@ function TrackPage() {
                   </div>
                 </div>
               </div>
-              <Timeline events={match.events} />
+              <Timeline events={match.events} officeNames={match.officeNames} />
             </CardContent>
           </Card>
           <Card>

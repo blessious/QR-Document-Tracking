@@ -1,0 +1,2 @@
+ALTER TABLE `workflows`
+ADD COLUMN `template` BOOLEAN NOT NULL DEFAULT true;

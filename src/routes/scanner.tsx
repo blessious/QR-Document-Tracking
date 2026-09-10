@@ -1,16 +1,26 @@
-import { Outlet, createFileRoute, Link, useRouterState } from "@tanstack/react-router";
-import { ArrowLeft, Inbox, QrCode, Send, ScanLine } from "lucide-react";
+import { ROLE_HOME } from "@/lib/permissions";
+import { LoadingPageSkeleton } from "@/components/common/LoadingPageSkeleton";
+import { ThemeToggle } from "@/components/common/ThemeToggle";
 import { cn } from "@/lib/utils";
-import { useApp } from "@/store/app-store";
 import { officeName } from "@/services/api";
+import { useApp } from "@/store/app-store";
+import { Outlet, createFileRoute, Link, useRouterState } from "@tanstack/react-router";
+import { ArrowLeft, Inbox, LogOut, QrCode, Send, ScanLine } from "lucide-react";
+import { LoginPage } from "./index";
 
 export const Route = createFileRoute("/scanner")({
   head: () => ({
     meta: [
       { title: "Mobile scanner — LGU DocTrack" },
-      { name: "description", content: "Handheld receiving and dispatch station for QR-labelled documents." },
+      {
+        name: "description",
+        content: "Handheld receiving and dispatch station for QR-labelled documents.",
+      },
       { property: "og:title", content: "Mobile scanner — LGU DocTrack" },
-      { property: "og:description", content: "Handheld receiving and dispatch station for QR-labelled documents." },
+      {
+        property: "og:description",
+        content: "Handheld receiving and dispatch station for QR-labelled documents.",
+      },
     ],
   }),
   component: ScannerLayout,
@@ -25,28 +35,69 @@ const TABS = [
 
 function ScannerLayout() {
   const pathname = useRouterState({ select: (s) => s.location.pathname });
-  const { session } = useApp();
+  const { session, loading, logout } = useApp();
+  if (loading) return <LoadingPageSkeleton variant="scanner" />;
+  if (!session) return <LoginPage />;
+  const backTo = session.role === "receiving" ? "/scanner" : ROLE_HOME[session.role];
 
   return (
-    <div className="flex min-h-screen flex-col bg-muted/40">
-      <header className="sticky top-0 z-20 flex items-center gap-3 bg-sidebar px-4 py-3 text-sidebar-foreground">
-        <Link to="/dashboard" className="rounded-md p-1 hover:bg-sidebar-accent" aria-label="Back to desktop app">
-          <ArrowLeft className="size-5" />
-        </Link>
-        <div className="min-w-0">
-          <p className="truncate text-sm font-semibold">Receiving station</p>
-          <p className="truncate text-xs text-sidebar-foreground/60">{officeName(session?.officeId ?? "off-accounting")}</p>
+    <div className="flex min-h-screen min-h-[100svh] flex-col bg-muted/30">
+      <header className="sticky top-0 z-20 border-b border-border/80 bg-background/85 text-foreground shadow-sm backdrop-blur-xl">
+        <div className="mx-auto flex min-h-14 w-full max-w-6xl items-center gap-2 px-3 pt-[calc(0.75rem+env(safe-area-inset-top))] pb-3 sm:gap-3 sm:px-6 sm:py-3">
+          <Link
+            to={backTo}
+            className="rounded-lg p-1.5 text-muted-foreground hover:bg-accent hover:text-foreground"
+            aria-label="Back to desktop app"
+          >
+            <ArrowLeft className="size-5" />
+          </Link>
+          <div className="min-w-0">
+            <p className="truncate text-sm font-semibold tracking-tight">Receiving station</p>
+            <p className="truncate text-xs text-muted-foreground">
+              {officeName(session?.officeId ?? "off-accounting")}
+            </p>
+          </div>
+
+          <nav className="ml-6 hidden items-center gap-1 lg:flex">
+            {TABS.map((t) => {
+              const active = pathname === t.to;
+              return (
+                <Link
+                  key={t.to}
+                  to={t.to}
+                  className={cn(
+                    "inline-flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium transition-colors",
+                    active
+                      ? "bg-primary text-primary-foreground shadow-sm"
+                      : "text-muted-foreground hover:bg-accent hover:text-accent-foreground",
+                  )}
+                >
+                  <t.icon className="size-4" aria-hidden />
+                  {t.label}
+                </Link>
+              );
+            })}
+          </nav>
+
+          <button
+            className="ml-auto hidden shrink-0 items-center gap-2 rounded-lg px-3 py-2 text-sm text-muted-foreground hover:bg-accent hover:text-accent-foreground sm:inline-flex"
+            onClick={() => void logout()}
+          >
+            <LogOut className="size-4" aria-hidden />
+            Sign out
+          </button>
+          <ThemeToggle />
+          <span className="flex size-8 items-center justify-center rounded-full bg-primary/10 text-xs font-semibold text-primary ring-1 ring-primary/15">
+            {session?.avatarInitials ?? "JS"}
+          </span>
         </div>
-        <span className="ml-auto flex size-8 items-center justify-center rounded-full bg-sidebar-accent text-xs font-semibold">
-          {session?.avatarInitials ?? "JS"}
-        </span>
       </header>
 
-      <main className="mx-auto w-full max-w-md flex-1 px-4 py-4 pb-24">
+      <main className="mx-auto w-full max-w-6xl flex-1 px-4 py-4 pb-24 sm:px-6 lg:py-8 lg:pb-8">
         <Outlet />
       </main>
 
-      <nav className="fixed inset-x-0 bottom-0 z-30 border-t border-border bg-background pb-[env(safe-area-inset-bottom)]">
+      <nav className="fixed inset-x-0 bottom-0 z-30 border-t border-border/80 bg-background/90 pb-[env(safe-area-inset-bottom)] shadow-[0_-8px_24px_rgba(15,23,42,0.06)] backdrop-blur-xl lg:hidden">
         <ul className="mx-auto grid max-w-md grid-cols-4">
           {TABS.map((t) => {
             const active = pathname === t.to;

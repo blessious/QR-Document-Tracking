@@ -10,6 +10,7 @@ const STATUS_LABEL: Record<DocumentStatus, string> = {
   returned: "Returned",
   completed: "Completed",
   filed: "Filed",
+  voided: "Voided",
 };
 
 const STATUS_CLASS: Record<DocumentStatus, string> = {
@@ -21,6 +22,7 @@ const STATUS_CLASS: Record<DocumentStatus, string> = {
   returned: "bg-destructive/10 text-destructive border-destructive/25",
   completed: "bg-success-soft text-success border-success/30",
   filed: "bg-secondary text-secondary-foreground border-border",
+  voided: "bg-destructive/10 text-destructive border-destructive/25",
 };
 
 export function StatusBadge({ status, className }: { status: DocumentStatus; className?: string }) {

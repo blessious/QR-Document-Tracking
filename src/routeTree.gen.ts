@@ -32,8 +32,6 @@ import { Route as ScannerReceiveRouteImport } from './routes/scanner.receive'
 import { Route as ShellDocumentsIndexRouteImport } from './routes/_shell.documents.index'
 import { Route as ShellDocumentsDocIdRouteImport } from './routes/_shell.documents.$docId'
 import { Route as ShellDocumentsNewRouteImport } from './routes/_shell.documents.new'
-import { Route as ShellWorkflowsIndexRouteImport } from './routes/_shell.workflows.index'
-import { Route as ShellWorkflowsBuilderRouteImport } from './routes/_shell.workflows.builder'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -149,16 +147,6 @@ const ShellDocumentsNewRoute = ShellDocumentsNewRouteImport.update({
   path: '/documents/new',
   getParentRoute: () => ShellRoute,
 } as any)
-const ShellWorkflowsIndexRoute = ShellWorkflowsIndexRouteImport.update({
-  id: '/workflows/',
-  path: '/workflows/',
-  getParentRoute: () => ShellRoute,
-} as any)
-const ShellWorkflowsBuilderRoute = ShellWorkflowsBuilderRouteImport.update({
-  id: '/workflows/builder',
-  path: '/workflows/builder',
-  getParentRoute: () => ShellRoute,
-} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
@@ -182,9 +170,7 @@ export interface FileRoutesByFullPath {
   '/scanner/': typeof ScannerIndexRoute
   '/documents/$docId': typeof ShellDocumentsDocIdRoute
   '/documents/new': typeof ShellDocumentsNewRoute
-  '/workflows/builder': typeof ShellWorkflowsBuilderRoute
   '/documents/': typeof ShellDocumentsIndexRoute
-  '/workflows/': typeof ShellWorkflowsIndexRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -207,9 +193,7 @@ export interface FileRoutesByTo {
   '/scanner': typeof ScannerIndexRoute
   '/documents/$docId': typeof ShellDocumentsDocIdRoute
   '/documents/new': typeof ShellDocumentsNewRoute
-  '/workflows/builder': typeof ShellWorkflowsBuilderRoute
   '/documents': typeof ShellDocumentsIndexRoute
-  '/workflows': typeof ShellWorkflowsIndexRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -235,9 +219,7 @@ export interface FileRoutesById {
   '/scanner/': typeof ScannerIndexRoute
   '/_shell/documents/$docId': typeof ShellDocumentsDocIdRoute
   '/_shell/documents/new': typeof ShellDocumentsNewRoute
-  '/_shell/workflows/builder': typeof ShellWorkflowsBuilderRoute
   '/_shell/documents/': typeof ShellDocumentsIndexRoute
-  '/_shell/workflows/': typeof ShellWorkflowsIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -263,9 +245,7 @@ export interface FileRouteTypes {
     | '/scanner/'
     | '/documents/$docId'
     | '/documents/new'
-    | '/workflows/builder'
     | '/documents/'
-    | '/workflows/'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -288,9 +268,7 @@ export interface FileRouteTypes {
     | '/scanner'
     | '/documents/$docId'
     | '/documents/new'
-    | '/workflows/builder'
     | '/documents'
-    | '/workflows'
   id:
     | '__root__'
     | '/'
@@ -315,9 +293,7 @@ export interface FileRouteTypes {
     | '/scanner/'
     | '/_shell/documents/$docId'
     | '/_shell/documents/new'
-    | '/_shell/workflows/builder'
     | '/_shell/documents/'
-    | '/_shell/workflows/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -489,20 +465,6 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ShellDocumentsNewRouteImport
       parentRoute: typeof ShellRoute
     }
-    '/_shell/workflows/': {
-      id: '/_shell/workflows/'
-      path: '/workflows'
-      fullPath: '/workflows/'
-      preLoaderRoute: typeof ShellWorkflowsIndexRouteImport
-      parentRoute: typeof ShellRoute
-    }
-    '/_shell/workflows/builder': {
-      id: '/_shell/workflows/builder'
-      path: '/workflows/builder'
-      fullPath: '/workflows/builder'
-      preLoaderRoute: typeof ShellWorkflowsBuilderRouteImport
-      parentRoute: typeof ShellRoute
-    }
   }
 }
 
@@ -522,9 +484,7 @@ interface ShellRouteChildren {
   ShellUsersRoute: typeof ShellUsersRoute
   ShellDocumentsDocIdRoute: typeof ShellDocumentsDocIdRoute
   ShellDocumentsNewRoute: typeof ShellDocumentsNewRoute
-  ShellWorkflowsBuilderRoute: typeof ShellWorkflowsBuilderRoute
   ShellDocumentsIndexRoute: typeof ShellDocumentsIndexRoute
-  ShellWorkflowsIndexRoute: typeof ShellWorkflowsIndexRoute
 }
 
 const ShellRouteChildren: ShellRouteChildren = {
@@ -543,9 +503,7 @@ const ShellRouteChildren: ShellRouteChildren = {
   ShellUsersRoute: ShellUsersRoute,
   ShellDocumentsDocIdRoute: ShellDocumentsDocIdRoute,
   ShellDocumentsNewRoute: ShellDocumentsNewRoute,
-  ShellWorkflowsBuilderRoute: ShellWorkflowsBuilderRoute,
   ShellDocumentsIndexRoute: ShellDocumentsIndexRoute,
-  ShellWorkflowsIndexRoute: ShellWorkflowsIndexRoute,
 }
 
 const ShellRouteWithChildren = ShellRoute._addFileChildren(ShellRouteChildren)
